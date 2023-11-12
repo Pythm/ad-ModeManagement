@@ -1,0 +1,58 @@
+
+modeManage:
+  module: modeManagement
+  class: ModeManagement
+  log: lights_log
+  workday: binary_sensor.workday_sensor
+  away_state: input_boolean.vekk_reist
+  turn_off_at_night:
+    - media_player.denon_avr_x3000
+    - media_player.denon_avr_x3000_2
+    - media_player.ue55d6500
+  morning_sensors:
+    - binary_sensor.multisensor_inngang_home_security_motion_detection # Entre sensor
+  night_sensors:
+    - binary_sensor.fibaro_door_window_sensor_2_access_control_window_door_is_open_4 # Takvindu Camilla
+  presence:
+    - person: person.anders_heibo
+      role: adult
+    - person: person.camilla_nordvik_2
+      role: adult
+    - person: person.leietaker
+      role: tenant
+    - person: person.oliver
+      role: kid
+    - person: person.nathaniel
+      role: kid
+    - person: person.geir
+      role: housekeeper
+
+  vacuum:
+    - vacuum.roomba
+    - vacuum.roborock_s8
+  alarmsensors:
+    - sensor: binary_sensor.multisensor_inngang_home_security_motion_detection # Inngang
+  #  - sensor: binary_sensor.motion_sensor_home_security_motion_detection # Kjøkkensensor
+  #  - sensor: binary_sensor.multisensor_6_home_security_motion_detection # Olivers rom
+  #  - sensor: binary_sensor.multisensor_6_home_security_motion_detection_2 # Nathaniels rom
+  #  - sensor: binary_sensor.door_window_sensor_7_access_control_window_door_is_open # Stuevindu
+  #  - sensor: binary_sensor.door_window_sensor_7_access_control_window_door_is_open_2 # Veranda dør
+  #  - sensor: binary_sensor.window_sensor_fibaro_kontor1_access_control_window_door_is_open_3 # Kontorvindu 1
+  #  - sensor: binary_sensor.window_sensor_fibaro_kontor2_access_control_window_door_is_open_3 # Kontorvindu 2
+  #  - sensor: binary_sensor.fibaro_door_window_sensor_2_access_control_window_door_is_open_2 # Nathaniels vindu
+  #  - sensor: binary_sensor.fibaro_door_window_sensor_2_access_control_window_door_is_open # Olivers vindu
+  #  - sensor: binary_sensor.takvindu_anders_access_control_window_door_is_open # Takvindu Anders
+  #  - sensor: binary_sensor.fibaro_door_window_sensor_2_access_control_window_door_is_open_4 # Takvindu Camilla
+  #  - sensor: binary_sensor.window_sensor_fibaro_soverom_access_control_window_door_is_open_6 # Soveromsvindu
+  notify_reciever:
+    - reciever: mobile_app_anders_iphone
+  #  - reciever: mobile_app_oliver_emre_sin_iphone
+  notify_title: 'Alarm'
+  notify_message: 'Ingen hjemme men det er bevegelse'
+  alarm_media:
+    - amp: media_player.denon_avr_x3000
+      source: Roon
+      volume: 0.5
+      normal_volume: 0.33
+      player: media_player.gaming_krok
+      playlist: 'Library/Artists/Alarm/Alarm'

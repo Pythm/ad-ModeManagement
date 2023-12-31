@@ -2,53 +2,37 @@
 modeManage:
   module: modeManagement
   class: ModeManagement
-  log: lights_log
   workday: binary_sensor.workday_sensor
-  away_state: input_boolean.vekk_reist
+  away_state: input_boolean.on_holliday
+  HALightModeText: input_text.lightmode #To display current LightMode in Lovelace
   turn_off_at_night:
     - media_player.denon_avr_x3000
-    - media_player.denon_avr_x3000_2
-    - media_player.ue55d6500
+    - media_player.tv
   morning_sensors:
-    - binary_sensor.multisensor_inngang_home_security_motion_detection # Entre sensor
+    - binary_sensor.multisensor_hallway_home_security_motion_detection
   night_sensors:
-    - binary_sensor.fibaro_door_window_sensor_2_access_control_window_door_is_open_4 # Takvindu Camilla
+    - binary_sensor.fibaro_door_window_sensor_2_access_control_window_door_is_open
   presence:
-    - person: person.anders_heibo
+    - person: person.yourname
       role: adult
-    - person: person.camilla_nordvik_2
+    - person: person.yourwife
       role: adult
-    - person: person.leietaker
+    - person: person.tenant
       role: tenant
-    - person: person.oliver
+    - person: person.kid1
       role: kid
-    - person: person.nathaniel
+    - person: person.kid2
       role: kid
-    - person: person.geir
+    - person: person.fatherInLaw
       role: housekeeper
 
   vacuum:
     - vacuum.roomba
     - vacuum.roborock_s8
   alarmsensors:
-    - sensor: binary_sensor.multisensor_inngang_home_security_motion_detection # Inngang
-  #  - sensor: binary_sensor.motion_sensor_home_security_motion_detection # Kjøkkensensor
-  #  - sensor: binary_sensor.multisensor_6_home_security_motion_detection # Olivers rom
-  #  - sensor: binary_sensor.multisensor_6_home_security_motion_detection_2 # Nathaniels rom
-  #  - sensor: binary_sensor.door_window_sensor_7_access_control_window_door_is_open # Stuevindu
-  #  - sensor: binary_sensor.door_window_sensor_7_access_control_window_door_is_open_2 # Veranda dør
-  #  - sensor: binary_sensor.window_sensor_fibaro_kontor1_access_control_window_door_is_open_3 # Kontorvindu 1
-  #  - sensor: binary_sensor.window_sensor_fibaro_kontor2_access_control_window_door_is_open_3 # Kontorvindu 2
-  #  - sensor: binary_sensor.fibaro_door_window_sensor_2_access_control_window_door_is_open_2 # Nathaniels vindu
-  #  - sensor: binary_sensor.fibaro_door_window_sensor_2_access_control_window_door_is_open # Olivers vindu
-  #  - sensor: binary_sensor.takvindu_anders_access_control_window_door_is_open # Takvindu Anders
-  #  - sensor: binary_sensor.fibaro_door_window_sensor_2_access_control_window_door_is_open_4 # Takvindu Camilla
-  #  - sensor: binary_sensor.window_sensor_fibaro_soverom_access_control_window_door_is_open_6 # Soveromsvindu
+    - binary_sensor.multisensor_hallway_home_security_motion_detection
   notify_reciever:
-    - reciever: mobile_app_anders_iphone
-  #  - reciever: mobile_app_oliver_emre_sin_iphone
-  notify_title: 'Alarm'
-  notify_message: 'Ingen hjemme men det er bevegelse'
+    - mobile_app_yourphone
   alarm_media:
     - amp: media_player.denon_avr_x3000
       source: Roon

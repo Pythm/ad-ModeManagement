@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 import appdaemon.plugins.hass.hassapi as hass
 import datetime
@@ -122,18 +122,20 @@ class ModeManagement(hass.Hass):
 
 
         # MQTT Door lock
-        if 'MQTT_door_lock' in self.args:
-            self.MQTT_door_lock:list = self.args['MQTT_door_lock']
-            if not self.mqtt:
-                self.mqtt = self.get_plugin_api("MQTT")
-            self.lastUnlockTime = datetime.datetime.now()
+        self.MQTT_door_lock:list = self.args.get('MQTT_door_lock',[])
+        if (
+            self.MQTT_door_lock
+            and not self.mqtt
+        ):
+            self.mqtt = self.get_plugin_api("MQTT")
+        self.lastUnlockTime = datetime.datetime.now()
 
-            for door in self.MQTT_door_lock:
-                self.mqtt.mqtt_subscribe(door)
-                self.mqtt.listen_event(self.MQTT_doorlock_event, "MQTT_MESSAGE",
-                    topic = door,
-                    namespace = self.MQTT_namespace
-                )
+        for door in self.MQTT_door_lock:
+            self.mqtt.mqtt_subscribe(door)
+            self.mqtt.listen_event(self.MQTT_doorlock_event, "MQTT_MESSAGE",
+                topic = door,
+                namespace = self.MQTT_namespace
+            )
 
 
         # Update current mode to a Home Assistant input_text
@@ -437,9 +439,12 @@ class ModeManagement(hass.Hass):
                     if data['last_unlock_user'] == person['lock_user']:
                         if not person['last_lock']:
                             self.turn_off(person['outside'])
+                            self.log(f"User unlock: {person['person']}. State: {data['state']}") ###
                             person.update(
                                 {'last_lock' : True}
                             )
+                        #else: ###
+                        #    self.log(f"User already unlock: {person['person']}. State: {data['state']}") ###
                     else:
                         person.update(
                             {'last_lock' : False}

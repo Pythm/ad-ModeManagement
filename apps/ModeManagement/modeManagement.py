@@ -1,11 +1,8 @@
 """ Mode Event Management
 
-### What's Changed:
-- Next version is 0.1.4
-
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 import appdaemon.plugins.hass.hassapi as hass
 import datetime

@@ -1,5 +1,8 @@
 """ Mode Event Management
 
+### What's Changed:
+- Next version is 0.1.4
+
     @Pythm / https://github.com/Pythm
 """
 __version__ = "0.1.3"
@@ -128,12 +131,12 @@ class ModeManagement(hass.Hass):
                 self.mqtt = self.get_plugin_api("MQTT")
             self.lastUnlockTime = datetime.datetime.now()
 
-        for door in self.MQTT_door_lock:
-            self.mqtt.mqtt_subscribe(door)
-            self.mqtt.listen_event(self.MQTT_doorlock_event, "MQTT_MESSAGE",
-                topic = door,
-                namespace = self.MQTT_namespace
-            )
+            for door in self.MQTT_door_lock:
+                self.mqtt.mqtt_subscribe(door)
+                self.mqtt.listen_event(self.MQTT_doorlock_event, "MQTT_MESSAGE",
+                    topic = door,
+                    namespace = self.MQTT_namespace
+                )
 
 
         # Update current mode to a Home Assistant input_text

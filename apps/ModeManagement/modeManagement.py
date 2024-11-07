@@ -439,12 +439,9 @@ class ModeManagement(hass.Hass):
                     if data['last_unlock_user'] == person['lock_user']:
                         if not person['last_lock']:
                             self.turn_off(person['outside'])
-                            self.log(f"User unlock: {person['person']}. State: {data['state']}") ###
                             person.update(
                                 {'last_lock' : True}
                             )
-                        #else: ###
-                        #    self.log(f"User already unlock: {person['person']}. State: {data['state']}") ###
                     else:
                         person.update(
                             {'last_lock' : False}

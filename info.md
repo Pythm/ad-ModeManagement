@@ -98,6 +98,8 @@ The unlock with id is programmed to set wash mode if person unlocking is defined
       lock_user: 0
 ```
 
+In additon to the outside switch pr person you can configure one switch that prevents the app from setting away with `keep_mode_when_outside`. This is reset at the time defined with `morning_start_listen_time`.
+
 ### Vacuum cleaners
 If no adults are home, `vacuum` cleaners will start. They will return to their dock if an adult returns home. You can prevent them to start with sensors in the list `prevent_vacuum`.
 

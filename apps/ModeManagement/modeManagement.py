@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 import appdaemon.plugins.hass.hassapi as hass
 import datetime
@@ -349,6 +349,7 @@ class ModeManagement(hass.Hass):
     def changeMorningToDay(self, kwargs):
         if self.current_MODE == 'morning':
             self.fire_event('MODE_CHANGE', mode = 'normal')
+        self.cancel_listening_for_morning(0)
 
 
     def waking_up(self, entity, attribute, old, new, kwargs):
@@ -359,11 +360,13 @@ class ModeManagement(hass.Hass):
             self.fire_event('MODE_CHANGE', mode = 'morning')
         else:
             self.fire_event('MODE_CHANGE', mode = 'normal')
+        self.cancel_listening_for_morning(0)
 
 
     def going_to_bed(self, entity, attribute, old, new, kwargs):
         if self.current_MODE != 'away':
             self.fire_event("MODE_CHANGE", mode = 'night')
+        self.cancel_listening_for_night()
 
 
     def good_day_now(self, kwargs):
@@ -372,8 +375,7 @@ class ModeManagement(hass.Hass):
             or self.current_MODE == 'morning'
         ):
             self.fire_event("MODE_CHANGE", mode = 'normal')
-        else:
-            self.cancel_listening_for_morning()
+        self.cancel_listening_for_morning(0)
 
 
     def good_night_now(self, kwargs):
@@ -382,8 +384,7 @@ class ModeManagement(hass.Hass):
             and self.current_MODE != 'night'
         ):
             self.fire_event("MODE_CHANGE", mode = 'night')
-        else:
-            self.cancel_listening_for_night()
+        self.cancel_listening_for_night()
 
 
         # Door lock
@@ -438,6 +439,7 @@ class ModeManagement(hass.Hass):
                 if 'lock_user' in person:
                     if data['last_unlock_user'] == person['lock_user']:
                         if not person['last_lock']:
+                            self.log(f"User unlock: {person['person']}. State: {data['state']}. Outside switch: {self.get_state(person['outside'])}") ###
                             self.turn_off(person['outside'])
                             person.update(
                                 {'last_lock' : True}

@@ -264,8 +264,7 @@ class ModeManagement(hass.Hass):
                 data['mode'] == 'normal'
                 or data['mode'] == 'morning'
             ):
-                if self.now_is_between(self.morning_runtime, self.execute_morning):
-                    self.cancel_listening_for_morning(0)
+                self.cancel_listening_for_morning(0)
                 self.unlockDoor()
 
         # Night
@@ -439,7 +438,6 @@ class ModeManagement(hass.Hass):
                 if 'lock_user' in person:
                     if data['last_unlock_user'] == person['lock_user']:
                         if not person['last_lock']:
-                            self.log(f"User unlock: {person['person']}. State: {data['state']}. Outside switch: {self.get_state(person['outside'])}") ###
                             self.turn_off(person['outside'])
                             person.update(
                                 {'last_lock' : True}

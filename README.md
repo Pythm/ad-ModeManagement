@@ -45,6 +45,8 @@ You have the option to define a time the morning is changed to normal mode with 
 
 If your mode is still night or morning at `execute_morning_at`, the mode will be set to normal.
 
+You have the option to turn on entities that are off with `turn_on_in_the_morning`. This only applies to entities with state on or off.
+
 ```yaml
   morning_sensors:
     - binary_sensor.motion_detection
@@ -52,10 +54,13 @@ If your mode is still night or morning at `execute_morning_at`, the mode will be
   morning_start_listen_time: '06:00:00'
   morning_to_normal: '09:00:00'
   execute_morning_at: '10:00:00'
+
+  turn_on_in_the_morning:
+    - switch.coffee_machine
 ```
 
 ### Night
-Night is basically a reverse of morning. Define your sensors with `night_sensors` in configuration. This will change the mode to night and turn off entities defined with `turn_off_at_night`.
+Night is basically a reverse of morning. Define your sensors with `night_sensors` in configuration. This will change the mode to night and turn off entities defined with `turn_off_at_night`. Turn off at night is entities with state on or off.
 
 The app starts listening at the sensors at `night_start_listen_time` and stops listening and changes mode to night at time configured with `execute_night_at`.
 

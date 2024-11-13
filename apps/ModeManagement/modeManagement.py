@@ -1,8 +1,13 @@
 """ Mode Event Management
 
+## What's Changed
+- Added 'turn_on_in_the_morning' to turn on entities in the morning.
+- Fixed a bug if 'morning_to_normal' was not configured
+- Improvements
+
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 import appdaemon.plugins.hass.hassapi as hass
 import datetime
@@ -201,17 +206,18 @@ class ModeManagement(hass.Hass):
                     f"Not able to convert morning_to_normal: {self.morning_to_day}. Error: {ve}",
                     level = 'INFO'    
                 )
-                self.morning_to_day = execute_morning
-
-            self.run_daily(self.changeMorningToDay, self.morning_to_day)
+                self.morning_to_day = self.execute_morning
+            else:
+                self.run_daily(self.changeMorningToDay, self.morning_to_day)
         else:
-            self.morning_to_day = execute_morning
+            self.morning_to_day = self.execute_morning
 
 
         # Night routine
         self.night_handler = []
 
         self.turn_off_at_night = self.args.get('turn_off_at_night',[])
+        self.turn_on_in_the_morning = self.args.get('turn_on_in_the_morning', [])
 
         self.night_sensors = self.args.get('night_sensors', [])
         self.night_runtime = self.args.get('night_start_listen_time', '22:00:00')
@@ -252,8 +258,9 @@ class ModeManagement(hass.Hass):
         """ Functions to change and manage modes for controlling lights and other
         """
         if self.haLightModeText:
-            self.set_state(self.haLightModeText,
-                state = data['mode'],
+            self.call_service('input_text/set_value',
+                value = data['mode'],
+                entity_id = self.haLightModeText,
                 namespace = self.HASS_namespace
             )
 
@@ -264,6 +271,9 @@ class ModeManagement(hass.Hass):
                 data['mode'] == 'normal'
                 or data['mode'] == 'morning'
             ):
+                for item in self.turn_on_in_the_morning:
+                    if self.get_state(item) == 'off':
+                        self.turn_on(item)
                 self.cancel_listening_for_morning(0)
                 self.unlockDoor()
 
@@ -348,10 +358,10 @@ class ModeManagement(hass.Hass):
     def changeMorningToDay(self, kwargs):
         if self.current_MODE == 'morning':
             self.fire_event('MODE_CHANGE', mode = 'normal')
-        self.cancel_listening_for_morning(0)
 
 
     def waking_up(self, entity, attribute, old, new, kwargs):
+        self.log(f"now_is_between {self.morning_runtime}, {self.morning_to_day} is {self.now_is_between(self.morning_runtime, self.morning_to_day)}") ###
         if (
             self.now_is_between(self.morning_runtime, self.morning_to_day)
             and self.get_state(self.workday) == 'on'
@@ -414,7 +424,7 @@ class ModeManagement(hass.Hass):
         try:
             data = json.loads(data['payload'])
         except Exception as e:
-            self.log(f"Could not get payload from topic for {data}. Exception: {e}", level = 'INFO') # DEBUG
+            self.log(f"Could not get payload from topic for {data}. Exception: {e}", level = 'DEBUG')
             return
         
         if (

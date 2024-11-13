@@ -1,13 +1,8 @@
 """ Mode Event Management
 
-## What's Changed
-- Added 'turn_on_in_the_morning' to turn on entities in the morning.
-- Fixed a bug if 'morning_to_normal' was not configured
-- Improvements
-
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.7"
+__version__ = "0.1.7_pre"
 
 import appdaemon.plugins.hass.hassapi as hass
 import datetime

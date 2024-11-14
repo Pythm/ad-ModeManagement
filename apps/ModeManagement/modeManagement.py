@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.7_pre"
+__version__ = "0.1.7"
 
 import appdaemon.plugins.hass.hassapi as hass
 import datetime
@@ -356,7 +356,6 @@ class ModeManagement(hass.Hass):
 
 
     def waking_up(self, entity, attribute, old, new, kwargs):
-        self.log(f"now_is_between {self.morning_runtime}, {self.morning_to_day} is {self.now_is_between(self.morning_runtime, self.morning_to_day)}") ###
         if (
             self.now_is_between(self.morning_runtime, self.morning_to_day)
             and self.get_state(self.workday) == 'on'

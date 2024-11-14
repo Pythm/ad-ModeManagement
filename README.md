@@ -5,9 +5,6 @@ An example of automating modes with Appdaemon to set suitable lights using the [
 1. Download the `ModeManagement` directory from inside the `apps` directory here to your [Appdaemon](https://appdaemon.readthedocs.io/en/latest/) `apps` directory.
 2. Add the configuration to a .yaml or .toml file to enable the `ModeManagement` module.
 
-### Dependencies:
-This app uses Workday sensor to change light to Normal and not Morning on weekends and on holidays: [Home Assistant Workday integration](https://www.home-assistant.io/integrations/workday/)
-
 
 ## App Usage and Configuration
 > [!TIP]
@@ -15,7 +12,7 @@ This app uses Workday sensor to change light to Normal and not Morning on weeken
 
 Set a main vacation switch with `vacation` to prevent the app from changing modes while you are away for the night or longer.
 
-Configure HA workday sensor with `workday`.
+This app uses a Workday sensor configured with `workday` to change light to Normal and not Morning on weekends and on holidays, when sensor is off. It will look for `binary_sensor.workday_sensor` if none is defined. To install the sensor in HA visit [Home Assistant Workday integration](https://www.home-assistant.io/integrations/workday/)
 
 You can receive notifications on your devices by listing them under `notify_receiver`. When certain conditions are met, like when sensors are triggered and no one is home, you will receive notifications.
 
@@ -45,7 +42,7 @@ You have the option to define a time the morning is changed to normal mode with 
 
 If your mode is still night or morning at `execute_morning_at`, the mode will be set to normal.
 
-You have the option to turn on entities that are off with `turn_on_in_the_morning`. This only applies to entities with state on or off.
+You have the option to turn on entities that have the state off with `turn_on_in_the_morning`. This only applies to entities with state `on` and `off`.
 
 ```yaml
   morning_sensors:
@@ -60,7 +57,7 @@ You have the option to turn on entities that are off with `turn_on_in_the_mornin
 ```
 
 ### Night
-Night is basically a reverse of morning. Define your sensors with `night_sensors` in configuration. This will change the mode to night and turn off entities defined with `turn_off_at_night`. Turn off at night is entities with state on or off.
+Night is basically a reverse of morning. Define your sensors with `night_sensors` in configuration. This will change the mode to night and turn off entities defined with `turn_off_at_night`. Only entities with state `on` will be turned off.
 
 The app starts listening at the sensors at `night_start_listen_time` and stops listening and changes mode to night at time configured with `execute_night_at`.
 

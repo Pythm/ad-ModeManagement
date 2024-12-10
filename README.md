@@ -16,6 +16,16 @@ This app uses a Workday sensor configured with `workday` to change light to Norm
 
 You can receive notifications on your devices by listing them under `notify_receiver`. When certain conditions are met, like when sensors are triggered and no one is home, you will receive notifications.
 
+You can also configure ClimateCommander to use your own Notification app instead with `notify_app`. You'll need to have a function in your app to receive. ClimateCommander sends one notification pr notify_receiver entry.
+```python
+    def send_notification(self,
+        message:str,
+        message_title:str,
+        message_recipient:str
+    ) -> None:
+```
+Search for "Test your notification app" in .py file and uncomment to test your own notification app.
+
 Use a Home Assistant input_text helper to display current Light Mode configured with `HALightModeText`.
 
 ```yaml

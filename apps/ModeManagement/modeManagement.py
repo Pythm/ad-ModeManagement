@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 import appdaemon.plugins.hass.hassapi as hass
 import datetime
@@ -20,8 +20,12 @@ class ModeManagement(hass.Hass):
 
 
         # Set up notification
-        self.notify_app = Notify_Mobiles(self)
         self.notify_reciever = self.args.get('notify_reciever', [])
+        name_of_notify_app = self.args.get('notify_app', None)
+        if name_of_notify_app != None:
+            self.notify_app = self.ADapi.get_app(name_of_notify_app)
+        else:
+            self.notify_app = Notify_Mobiles(self)
         self.nofify_on_alarm = True
 
 
@@ -249,23 +253,17 @@ class ModeManagement(hass.Hass):
         self.listen_event(self.mode_event, "MODE_CHANGE")
 
 
-    def mode_event(self, event_name, data, kwargs):
-        """ Functions to change and manage modes for controlling lights and other
+    def mode_event(self, event_name, data, kwargs) -> None:
+        """ Listens to mode events and reacts on night, morning, normal.
+            Also updates the input_text with mode.
         """
-        if self.haLightModeText:
-            self.call_service('input_text/set_value',
-                value = data['mode'],
-                entity_id = self.haLightModeText,
-                namespace = self.HASS_namespace
-            )
-
         # Morning
-        string:str = self.current_MODE
-        if string[:5] == 'night':
-            if (
-                data['mode'] == 'normal'
-                or data['mode'] == 'morning'
-            ):
+        if (
+            str(self.current_MODE)[:5] == 'night'
+            and self.now_is_between(self.morning_runtime, self.execute_morning)
+            and ( data['mode'] == 'normal'
+            or data['mode'] == 'morning')
+        ):
                 for item in self.turn_on_in_the_morning:
                     if self.get_state(item) == 'off':
                         self.turn_on(item)
@@ -291,8 +289,6 @@ class ModeManagement(hass.Hass):
                 )
             self.run_in(self.lockDoor, 1)
 
-        self.current_MODE = data['mode']
-
         # Away
         if data['mode'] == 'away':
             self.start_alarm()
@@ -305,9 +301,26 @@ class ModeManagement(hass.Hass):
                 )
             self.run_in(self.lockDoor, 7)
 
+        # Set mode
+        if (
+            str(data['mode'])[:5] == 'reset'
+            or str(data['mode'])[:6] == 'normal'
+        ):
+            self.current_MODE = 'normal'
+        else:
+            self.current_MODE = data['mode']
+
+        if self.haLightModeText:
+            self.call_service('input_text/set_value',
+                value = self.current_MODE,
+                entity_id = self.haLightModeText,
+                namespace = self.HASS_namespace
+            )
 
         # Morning and Night handling
-    def cancel_listening_for_morning(self, kwargs):
+    def cancel_listening_for_morning(self, kwargs) -> None:
+        """ Cancels the listen for morning handler.
+        """
         for handler in self.morning_handler:
             try:
                 if self.cancel_listen_state(handler):
@@ -319,7 +332,9 @@ class ModeManagement(hass.Hass):
         self.morning_handler = []
 
 
-    def cancel_listening_for_night(self):
+    def cancel_listening_for_night(self) -> None:
+        """ Cancels the listen for night handler.
+        """
         for handler in self.night_handler:
             try:
                 if self.cancel_listen_state(handler):
@@ -331,7 +346,9 @@ class ModeManagement(hass.Hass):
         self.night_handler = []
 
 
-    def waiting_for_morning(self, kwargs):
+    def waiting_for_morning(self, kwargs) -> None:
+        """ Starts listening for sensors activating morning/normal mode.
+        """
         if self.current_MODE != 'away':
             if self.keep_mode_when_outside != None:
                 self.turn_off(self.keep_mode_when_outside)
@@ -342,7 +359,9 @@ class ModeManagement(hass.Hass):
                 )
                 self.morning_handler.append(handler)
 
-    def waiting_for_night(self, kwargs):
+    def waiting_for_night(self, kwargs) -> None:
+        """ Starts listening for sensors activating night.
+        """
         for sensor in self.night_sensors:
             handler = self.listen_state(self.going_to_bed, sensor,
                 new = 'on'
@@ -350,12 +369,16 @@ class ModeManagement(hass.Hass):
             self.night_handler.append(handler)
 
 
-    def changeMorningToDay(self, kwargs):
+    def changeMorningToDay(self, kwargs) -> None:
+        """ Changes mode from morning to normal at given time.
+        """
         if self.current_MODE == 'morning':
             self.fire_event('MODE_CHANGE', mode = 'normal')
 
 
-    def waking_up(self, entity, attribute, old, new, kwargs):
+    def waking_up(self, entity, attribute, old, new, kwargs) -> None:
+        """ Reacts to morning sensors
+        """
         if (
             self.now_is_between(self.morning_runtime, self.morning_to_day)
             and self.get_state(self.workday) == 'on'
@@ -366,13 +389,17 @@ class ModeManagement(hass.Hass):
         self.cancel_listening_for_morning(0)
 
 
-    def going_to_bed(self, entity, attribute, old, new, kwargs):
+    def going_to_bed(self, entity, attribute, old, new, kwargs) -> None:
+        """ Reacts to night sensors
+        """
         if self.current_MODE != 'away':
             self.fire_event("MODE_CHANGE", mode = 'night')
         self.cancel_listening_for_night()
 
 
-    def good_day_now(self, kwargs):
+    def good_day_now(self, kwargs) -> None:
+        """ Change to normal day light at this time if mode is night or morning.
+        """
         if (
             self.current_MODE == 'night'
             or self.current_MODE == 'morning'
@@ -381,7 +408,9 @@ class ModeManagement(hass.Hass):
         self.cancel_listening_for_morning(0)
 
 
-    def good_night_now(self, kwargs):
+    def good_night_now(self, kwargs) -> None:
+        """ Change to night at the given time.
+        """
         if (
             self.current_MODE != 'away'
             and self.current_MODE != 'night'
@@ -390,8 +419,10 @@ class ModeManagement(hass.Hass):
         self.cancel_listening_for_night()
 
 
-        # Door lock
-    def lockDoor(self, kwargs):
+        # Door functions
+    def lockDoor(self, kwargs) -> None:
+        """ Locks the MQTT door.
+        """
         for door in self.MQTT_door_lock:
             self.mqtt.mqtt_publish(
                 topic = str(door) + "/set",
@@ -399,8 +430,10 @@ class ModeManagement(hass.Hass):
                 namespace = self.MQTT_namespace
             )
 
-        # Door unlock
-    def unlockDoor(self):
+
+    def unlockDoor(self) -> None:
+        """ Unlocks the MQTT door, and disables auto relock.
+        """
         for door in self.MQTT_door_lock:
             self.mqtt.mqtt_publish(
                 topic = str(door) + "/set/auto_relock",
@@ -415,6 +448,8 @@ class ModeManagement(hass.Hass):
 
         # Doorlock listen
     def MQTT_doorlock_event(self, event_name, data, kwargs) -> None:
+        """ Listens to MQTT door events.
+        """
         try:
             data = json.loads(data['payload'])
         except Exception as e:
@@ -437,7 +472,12 @@ class ModeManagement(hass.Hass):
                     ):
                         self.current_MODE = 'wash'
                         self.fire_event("MODE_CHANGE", mode = 'wash')
-                        self.notify_app.send_notification(f"Turned on wash lights. Housekeeper unlocked door", "Housekeeper", self.notify_reciever)
+                        for r in self.notify_reciever:
+                            self.notify_app.send_notification(
+                            message = f"Housekeeper {entity} unlocked door. Turned on wash lights",
+                            message_title = "Housekeeper",
+                            message_recipient = r
+                        )
 
                 if 'lock_user' in person:
                     if data['last_unlock_user'] == person['lock_user']:
@@ -460,7 +500,9 @@ class ModeManagement(hass.Hass):
                 )
 
 
-    def vacation_ending(self, entity, attribute, old, new, kwargs):
+    def vacation_ending(self, entity, attribute, old, new, kwargs) -> None:
+        """ Ends vacation when switch/button is turned off.
+        """
         for robot in self.vacuum:
             if (
                 (self.get_state(robot) == 'docked'
@@ -470,9 +512,10 @@ class ModeManagement(hass.Hass):
                 self.call_service('vacuum/start', entity_id = robot)
 
 
-    def presenceChange(self, entity, attribute, old, new, kwargs):
-        """ React to manual switches
+    def presenceChange(self, entity, attribute, old, new, kwargs) -> None:
+        """ Listens for trackers and switches on presence.
         """
+        # React to manual switches
         if new == 'on':
             new = 'away'
             old = 'home'
@@ -483,13 +526,12 @@ class ModeManagement(hass.Hass):
             for person in self.presence:
                 if person['outside'] == entity:
                     entity = person['person']
-                    self.log(f"Person is: {self.get_state(person['person'])}")
+                    self.log(f"{person['person']} is: {self.get_state(person['person'])} when turning off outside switch") ###
                     if self.get_state(person['person']) == 'home':
                         new = 'home'
 
 
-        """ React to presence trackers
-        """
+        # React to presence trackers
         if new == 'home':
             stop_vacuum = False
             entity_tenant = False
@@ -523,7 +565,12 @@ class ModeManagement(hass.Hass):
 
 
             elif self.housekeeperAtHome >= 1:
-                self.notify_app.send_notification(f"Housekeeper {entity} entered", "Housekeeper", self.notify_reciever)
+                for r in self.notify_reciever:
+                    self.notify_app.send_notification(
+                    message = f"Housekeeper {entity} entered",
+                    message_title = "Sensor triggered!",
+                    message_recipient = r
+                )
                 if self.current_MODE == 'away':
                     self.stop_alarm()
 
@@ -602,7 +649,9 @@ class ModeManagement(hass.Hass):
 
 
         #Function to handle notification when nobody is home
-    def start_alarm(self):
+    def start_alarm(self) -> None:
+        """ Starts listening for sensor activity.
+        """
         if not self.alarm_active:
             for sensor in self.alarmsensors:
                 handle = self.listen_state(self.sensor_activated, sensor,
@@ -613,7 +662,9 @@ class ModeManagement(hass.Hass):
             self.nofify_on_alarm = True
 
 
-    def stop_alarm(self):
+    def stop_alarm(self) -> None:
+        """ Stops listening for sensor activity.
+        """
         for handle in self.sensor_handle:
             try:
                 self.cancel_listen_state(handle)
@@ -623,18 +674,21 @@ class ModeManagement(hass.Hass):
         self.alarm_active = False
 
 
-    def sensor_activated(self, entity, attribute, old, new, kwargs):
-        for robot in self.vacuum:
-            if self.get_state(robot) == 'cleaning':
-                return
-
+    def sensor_activated(self, entity, attribute, old, new, kwargs) -> None:
+        """ Listens for sensors to send notification if triggered and play music.
+        """
         for person in self.presence:
             if person['role'] != 'tenant':
                 if person['state'] == 'home':
                     return
 
         if self.nofify_on_alarm:
-            self.notify_app.send_notification(f"{entity} triggered", "Alarm", self.notify_reciever)
+            for r in self.notify_reciever:
+                self.notify_app.send_notification(
+                message = f"{entity}",
+                message_title = "Sensor triggered!",
+                message_recipient = r
+            )
             self.nofify_on_alarm = False
             self.run_in(self.reset_alarm_notification, 600)
 
@@ -652,19 +706,23 @@ class ModeManagement(hass.Hass):
             )
 
 
-    def play_alarm_on_speakers(self, kwargs):
+    def play_alarm_on_speakers(self, kwargs) -> None:
+        """ Plays media after sensor is triggered.
+        """
         play_media = kwargs['play_media']
         self.call_service('media_player/play_media',
             entity_id = play_media['player'],
             media_content_id = play_media['playlist'],
             media_content_type = 'music'
         )
-        self.run_in(self.reset_soundlevel, 1,
+        self.run_in(self.reset_soundlevel, 10,
             play_media = play_media
         )
 
 
-    def reset_soundlevel(self,kwargs):
+    def reset_soundlevel(self,kwargs) -> None:
+        """ Sets sound level back to normal volume after alarm.
+        """
         play_media = kwargs['play_media']
         self.call_service('media_player/volume_set',
             entity_id = play_media['amp'],
@@ -672,24 +730,28 @@ class ModeManagement(hass.Hass):
         )
 
 
-    def reset_alarm_notification(self, kwargs):
+    def reset_alarm_notification(self, kwargs) -> None:
+        """ Resets timer so that any sensors triggered it will send a new notification.
+        """
         self.nofify_on_alarm = True
 
 
 class Notify_Mobiles:
+    """ Class to send notification with 'notify' HA integration
+    """
 
-    ADapi = None
-    def __init__(self,
-        api):
+    def __init__(self, api):
         self.ADapi = api
 
+
     def send_notification(self,
-        message = 'Message',
-        message_title = 'title',
-        message_recipient = ['all']
-    ):
-        if message_recipient == ['all']:
-            self.ADapi.notify(f"{message}", title = f"{message_title}")
-        else:
-            for reciever in message_recipient:
-                self.ADapi.notify(f"{message}", title = f"{message_title}", name = f"{reciever}")
+        message:str,
+        message_title:str,
+        message_recipient:str
+    ) -> None:
+        """ Sends notification to recipients via Home Assistant notification.
+        """
+        self.ADapi.call_service(f'notify/{message_recipient}',
+            title = message_title,
+            message = message
+        )

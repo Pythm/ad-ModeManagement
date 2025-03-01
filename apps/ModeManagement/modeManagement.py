@@ -552,7 +552,6 @@ class ModeManagement(hass.Hass):
             for person in self.presence:
                 if person['outside'] == entity:
                     entity = person['person']
-                    self.log(f"{person['person']} is: {self.get_state(person['person'], namespace = self.HASS_namespace)} when turning off outside switch") ###
                     if self.get_state(person['person'], namespace = self.HASS_namespace) == 'home':
                         new = 'home'
 
@@ -594,7 +593,6 @@ class ModeManagement(hass.Hass):
                     if self.timer_running(self.away_handler):
                         try:
                             self.cancel_timer(self.away_handler)
-                            self.log(f"Stopped existing handler to stop setting away state", level = "INFO") ###
                         except Exception as e:
                             self.log(
                                 f"Was not able to stop existing handler to stop setting away state. {e}",
@@ -668,7 +666,6 @@ class ModeManagement(hass.Hass):
                     )
                 self.run_in(self.lockDoor, 7)
 
-                self.log(f"Setting away mode in {self.delay_before_setting_away} seconds") ###
                 self.away_handler = self.run_in(self.setAwayMode, self.delay_before_setting_away)
 
 

@@ -16,15 +16,15 @@ This app uses a Workday sensor configured with `workday` to change light to Norm
 
 You can receive notifications on your devices by listing them under `notify_receiver`. When certain conditions are met, like when sensors are triggered and no one is home, you will receive notifications.
 
-You can also configure ClimateCommander to use your own Notification app instead with `notify_app`. You'll need to have a function in your app to receive. ClimateCommander sends one notification pr notify_receiver entry.
+You can also configure ModeManagement to use your own Notification app instead with `notify_app`. You'll need to have a function in your app to receive. ModeManagement sends one notification pr notify_receiver entry.
 ```python
-    def send_notification(self,
-        message:str,
-        message_title:str,
-        message_recipient:str
-    ) -> None:
+    def send_notification(self, **kwargs) -> None:
+        message:str = kwargs['message']
+        message_title:str = kwargs.get('message_title', 'Home Assistant')
+        message_recipient:str = kwargs.get('message_recipient', True)
+        also_if_not_home:bool = kwargs.get('also_if_not_home', True)
+
 ```
-Search for "Test your notification app" in .py file and uncomment to test your own notification app.
 
 Use a Home Assistant input_text helper to display current Light Mode configured with `HALightModeText`.
 
@@ -111,6 +111,8 @@ The unlock with id is programmed to set wash mode if person unlocking is defined
 ```
 
 In additon to the outside switch pr person you can configure one switch that prevents the app from setting away with `keep_mode_when_outside`. This is reset at the time defined with `morning_start_listen_time`.
+
+You can also set `delay_before_setting_away` as a delay in seconds before setting away mode when no one is home.
 
 ### Vacuum cleaners
 If no adults are home, `vacuum` cleaners will start. They will return to their dock if an adult returns home. You can prevent them to start with sensors in the list `prevent_vacuum`.

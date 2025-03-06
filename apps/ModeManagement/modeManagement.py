@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.9"
+__version__ = "0.1.10"
 
 import appdaemon.plugins.hass.hassapi as hass
 import datetime
@@ -453,8 +453,8 @@ class ModeManagement(hass.Hass):
         """
         for door in self.MQTT_door_lock:
             self.mqtt.mqtt_publish(
-                topic = str(door) + "/set",
-                payload = "UNLOCK",
+                topic = str(door) + "/set/auto_relock",
+                payload = "false",
                 namespace = self.MQTT_namespace
             )
         self.run_in(self.unlockDoor, 3)
@@ -465,8 +465,8 @@ class ModeManagement(hass.Hass):
         """
         for door in self.MQTT_door_lock:
             self.mqtt.mqtt_publish(
-                topic = str(door) + "/set/auto_relock",
-                payload = "false",
+                topic = str(door) + "/set",
+                payload = "UNLOCK",
                 namespace = self.MQTT_namespace
             )
 

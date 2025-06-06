@@ -1,11 +1,5 @@
 """ Mode Event Management
 
-    - Improvements to morning -> normal mode change.
-    - Implemented same mode handling as Lightwand with modename '_' roomname and only updates current mode if no roomname is provided.
-    - Changed notifications to now send recipients as a list to only make one call to 'send_notification'. This might be breaking if you have written and using your own notification app.
-    - Some notifications now adds a tag as a data dictionary to overwrite the exsisting notification on your phone.
-
-
     @Pythm / https://github.com/Pythm
 """
 __version__ = "0.1.10"

@@ -84,12 +84,12 @@ class ModeManagement(Hass):
         # Holliday switch from Home Assistant
         if 'away_state' in self.args: # Old name for vacation
             self.away_state = self.args['away_state']
-            self.listen_state(self.vacation_ending, self.away_state,
+            self.listen_state(self._vacation_ending, self.away_state,
                 new = 'off',
                 namespace = self.HASS_namespace)
         elif 'vacation' in self.args:
             self.away_state = self.args['vacation']
-            self.listen_state(self.vacation_ending, self.away_state,
+            self.listen_state(self._vacation_ending, self.away_state,
                 new = 'off',
                 namespace = self.HASS_namespace)
         else:
@@ -133,19 +133,24 @@ class ModeManagement(Hass):
         # Presence detection and HA switch for manual override
         self.adultAtHome:int = 0
         self.kidsAtHome:int = 0
+        self.extendedFamilyAtHome:int = 0
         self.tenantAtHome:int = 0
         self.housekeeperAtHome:int = 0
 
         self.presence = self.args['presence']
         for person in self.presence:
-            self.listen_state(self.presenceChange, person['person'], namespace = self.HASS_namespace)
+            if not 'role' in person:
+                person.update(
+                    {'role' : 'adult'}
+                )
+            self.listen_state(self._presenceChange, person['person'], namespace = self.HASS_namespace)
             person.update(
                 {'state' : self.get_state(person['person']), 'last_lock' : False}
             )
 
             if 'outside' in person:
-                self.listen_state(self.presenceChange, person['outside'], namespace = self.HASS_namespace)
-            else:
+                self.listen_state(self._presenceChange, person['outside'], namespace = self.HASS_namespace)
+            elif person['role'] in ['adult', 'kid']:
                 name:str = person['person']
                 if name[:6] == 'person':
                     name = name[7:]
@@ -153,18 +158,14 @@ class ModeManagement(Hass):
                     name = name[14:]
                 person['outside'] = 'input_boolean.outside_' + name
 
-            if not self.entity_exists(person['outside'], namespace = self.HASS_namespace):
-                self.call_service("state/set",
-                    entity_id = person['outside'],
-                    attributes = {'friendly_name' : str(person['person']) + ' Outside'},
-                    state = 'off',
-                    namespace = self.HASS_namespace
-                )
-
-            if not 'role' in person:
-                person.update(
-                    {'role' : 'adult'}
-                )
+            if 'outside' in person:
+                if not self.entity_exists(person['outside'], namespace = self.HASS_namespace):
+                    self.call_service("state/set",
+                        entity_id = person['outside'],
+                        attributes = {'friendly_name' : str(person['person']) + ' Outside'},
+                        state = 'off',
+                        namespace = self.HASS_namespace
+                    )
 
             if person['state'] == 'home':
                 if person['role'] == 'adult':
@@ -254,17 +255,17 @@ class ModeManagement(Hass):
             self.execute_morning = '10:00:00'
 
 
-        self.run_daily(self.waiting_for_morning, self.morning_runtime)
+        self.run_daily(self._waiting_for_morning, self.morning_runtime)
 
         if (
             self.now_is_between(self.morning_runtime, self.execute_morning)
             and self.current_MODE == NIGHT_TRANSLATE
         ):
-            self.run_in(self.waiting_for_morning, 1)
+            self.run_in(self._waiting_for_morning, 1)
 
-        self.run_daily(self.cancel_listening_for_morning, self.execute_morning)
+        self.run_daily(self._cancel_listening_for_morning, self.execute_morning)
 
-        self.run_daily(self.good_day_now, self.execute_morning)
+        self.run_daily(self._good_day_now, self.execute_morning)
 
         if self.morning_to_day is not None:
             try:
@@ -276,7 +277,7 @@ class ModeManagement(Hass):
                 )
                 self.morning_to_day = self.execute_morning
             else:
-                self.run_daily(self.changeMorningToDay, self.morning_to_day)
+                self.run_daily(self._changeMorningToDay, self.morning_to_day)
         else:
             self.morning_to_day = self.execute_morning
 
@@ -307,16 +308,27 @@ class ModeManagement(Hass):
             )
             self.execute_night = '02:00:00'
 
-        self.run_daily(self.waiting_for_night, self.night_runtime)
+        self.run_daily(self._waiting_for_night, self.night_runtime)
         if (
             self.now_is_between(self.night_runtime, self.execute_night)
             and self.current_MODE != NIGHT_TRANSLATE
         ):
-            self.run_in(self.waiting_for_night, 1)
-        self.run_daily(self.good_night_now, self.execute_night)
+            self.run_in(self._waiting_for_night, 1)
+        self.run_daily(self._good_night_now, self.execute_night)
 
         # Listens for mode events
         self.listen_event(self.mode_event, self.event_listen_str, namespace = self.HASS_namespace)
+
+
+    def anyone_home(self) -> bool:
+        if (
+            self.adultAtHome == 0
+            and self.kidsAtHome == 0
+            and self.housekeeperAtHome == 0
+            and self.tenantAtHome == 0
+        ):
+            return False
+        return True
 
 
     def mode_event(self, event_name, data, kwargs) -> None:
@@ -343,7 +355,7 @@ class ModeManagement(Hass):
                 for item in self.turn_on_in_the_morning:
                     if self.get_state(item, namespace = self.HASS_namespace) == 'off':
                         self.turn_on(item, namespace = self.HASS_namespace)
-                self.cancel_listening_for_morning(0)
+                self._cancel_listening_for_morning(0)
                 self.disableRelockDoor()
 
         # Night
@@ -355,7 +367,7 @@ class ModeManagement(Hass):
                 if self.get_state(item, namespace = self.HASS_namespace) == 'on':
                     self.turn_off(item, namespace = self.HASS_namespace)
 
-            self.cancel_listening_for_night()
+            self._cancel_listening_for_night()
 
             self.enableRelockDoor()
 
@@ -400,7 +412,7 @@ class ModeManagement(Hass):
 
 
         # Morning and Night handling
-    def cancel_listening_for_morning(self, kwargs) -> None:
+    def _cancel_listening_for_morning(self, kwargs) -> None:
         """ Cancels the listen for morning handler.
         """
         for handler in self.morning_handler:
@@ -414,7 +426,7 @@ class ModeManagement(Hass):
         self.morning_handler = []
 
 
-    def cancel_listening_for_night(self) -> None:
+    def _cancel_listening_for_night(self) -> None:
         """ Cancels the listen for night handler.
         """
         for handler in self.night_handler:
@@ -428,7 +440,7 @@ class ModeManagement(Hass):
         self.night_handler = []
 
 
-    def waiting_for_morning(self, kwargs) -> None:
+    def _waiting_for_morning(self, kwargs) -> None:
         """ Starts listening for sensors activating morning/normal mode.
         """
         if self.current_MODE != AWAY_TRANSLATE:
@@ -436,31 +448,31 @@ class ModeManagement(Hass):
                 self.turn_off(self.keep_mode_when_outside, namespace = self.HASS_namespace)
 
             for sensor in self.morning_sensors:
-                handler = self.listen_state(self.waking_up, sensor,
+                handler = self.listen_state(self._waking_up, sensor,
                     new = 'on',
                     namespace = self.HASS_namespace
                 )
                 self.morning_handler.append(handler)
 
-    def waiting_for_night(self, kwargs) -> None:
+    def _waiting_for_night(self, kwargs) -> None:
         """ Starts listening for sensors activating night.
         """
         for sensor in self.night_sensors:
-            handler = self.listen_state(self.going_to_bed, sensor,
+            handler = self.listen_state(self._going_to_bed, sensor,
                 new = 'on',
                 namespace = self.HASS_namespace
             )
             self.night_handler.append(handler)
 
 
-    def changeMorningToDay(self, kwargs) -> None:
+    def _changeMorningToDay(self, kwargs) -> None:
         """ Changes mode from morning to normal at given time.
         """
         if self.current_MODE == MORNING_TRANSLATE:
             self.fire_event(self.event_listen_str, mode = NORMAL_TRANSLATE, namespace = self.HASS_namespace)
 
 
-    def waking_up(self, entity, attribute, old, new, kwargs) -> None:
+    def _waking_up(self, entity, attribute, old, new, kwargs) -> None:
         """ Reacts to morning sensors
         """
         if (
@@ -470,18 +482,18 @@ class ModeManagement(Hass):
             self.fire_event(self.event_listen_str, mode = MORNING_TRANSLATE, namespace = self.HASS_namespace)
         else:
             self.fire_event(self.event_listen_str, mode = NORMAL_TRANSLATE, namespace = self.HASS_namespace)
-        self.cancel_listening_for_morning(0)
+        self._cancel_listening_for_morning(0)
 
 
-    def going_to_bed(self, entity, attribute, old, new, kwargs) -> None:
+    def _going_to_bed(self, entity, attribute, old, new, kwargs) -> None:
         """ Reacts to night sensors
         """
         if self.current_MODE != AWAY_TRANSLATE:
             self.fire_event(self.event_listen_str, mode = NIGHT_TRANSLATE, namespace = self.HASS_namespace)
-        self.cancel_listening_for_night()
+        self._cancel_listening_for_night()
 
 
-    def good_day_now(self, kwargs) -> None:
+    def _good_day_now(self, kwargs) -> None:
         """ Change to normal day light at this time if mode is night or morning.
         """
         if (
@@ -489,10 +501,10 @@ class ModeManagement(Hass):
             or self.current_MODE == MORNING_TRANSLATE
         ):
             self.fire_event(self.event_listen_str, mode = NORMAL_TRANSLATE, namespace = self.HASS_namespace)
-        self.cancel_listening_for_morning(0)
+        self._cancel_listening_for_morning(0)
 
 
-    def good_night_now(self, kwargs) -> None:
+    def _good_night_now(self, kwargs) -> None:
         """ Change to night at the given time.
         """
         if (
@@ -500,7 +512,7 @@ class ModeManagement(Hass):
             and self.current_MODE != NIGHT_TRANSLATE
         ):
             self.fire_event(self.event_listen_str, mode = NIGHT_TRANSLATE, namespace = self.HASS_namespace)
-        self.cancel_listening_for_night()
+        self._cancel_listening_for_night()
 
 
         # Door functions
@@ -535,7 +547,6 @@ class ModeManagement(Hass):
             )
         self.run_in(self.unlockDoor, 3)
 
-
     def unlockDoor(self, kwargs) -> None:
         """ Unlocks the MQTT door, and disables auto relock.
         """
@@ -556,12 +567,10 @@ class ModeManagement(Hass):
         except Exception as e:
             self.log(f"Could not get payload from topic for {data}. Exception: {e}", level = 'DEBUG')
             return
-        
         if (
             data['last_unlock_source'] != 'self'
             and data['state'] == 'UNLOCK'
         ):
-
             self.lastUnlockTime = datetime.datetime.now()
 
             for person in self.presence:
@@ -587,7 +596,8 @@ class ModeManagement(Hass):
                 if 'lock_user' in person:
                     if data['last_unlock_user'] == person['lock_user']:
                         if not person['last_lock']:
-                            self.turn_off(person['outside'], namespace = self.HASS_namespace)
+                            if 'outside' in person:
+                                self.turn_off(person['outside'], namespace = self.HASS_namespace)
                             person.update(
                                 {'last_lock' : True}
                             )
@@ -605,7 +615,7 @@ class ModeManagement(Hass):
                 )
 
 
-    def vacation_ending(self, entity, attribute, old, new, kwargs) -> None:
+    def _vacation_ending(self, entity, attribute, old, new, kwargs) -> None:
         """ Ends vacation when switch/button is turned off.
         """
         for robot in self.vacuum:
@@ -617,7 +627,7 @@ class ModeManagement(Hass):
                 self.call_service('vacuum/start', entity_id = robot, namespace = self.HASS_namespace)
 
 
-    def presenceChange(self, entity, attribute, old, new, kwargs) -> None:
+    def _presenceChange(self, entity, attribute, old, new, kwargs) -> None:
         """ Listens for trackers and switches on presence.
         """
         # React to manual switches
@@ -625,15 +635,17 @@ class ModeManagement(Hass):
             new = AWAY_TRANSLATE
             old = 'home'
             for person in self.presence:
-                if person['outside'] == entity:
-                    entity = person['person']
+                if 'outside' in person:
+                    if person['outside'] == entity:
+                        entity = person['person']
         elif new == 'off':
             for person in self.presence:
-                if person['outside'] == entity:
-                    entity = person['person']
-                    self.log(f"{person['person']} is: {self.get_state(person['person'], namespace = self.HASS_namespace)} when turning off outside switch") ###
-                    if self.get_state(person['person'], namespace = self.HASS_namespace) == 'home':
-                        new = 'home'
+                if 'outside' in person:
+                    if person['outside'] == entity:
+                        entity = person['person']
+                        self.log(f"{person['person']} is: {self.get_state(person['person'], namespace = self.HASS_namespace)} when turning off outside switch") ###
+                        if self.get_state(person['person'], namespace = self.HASS_namespace) == 'home':
+                            new = 'home'
 
 
         # React to presence trackers
@@ -642,26 +654,28 @@ class ModeManagement(Hass):
 
             for person in self.presence:
                 if person['person'] == entity:
-                    if self.get_state(person['outside'], namespace = self.HASS_namespace) == 'off':
-                        person.update(
-                            {'state': new }
-                        )
-                        if person['role'] == 'adult':
-                            if self.adultAtHome == 0:
-                                if self.stop_vacuum:
-                                    for robot in self.vacuum:
-                                        if self.get_state(robot) == 'cleaning':
-                                            self.call_service('vacuum/return_to_base', entity_id = robot, namespace = self.HASS_namespace)
-                                    self.stop_vacuum = False
-                            self.adultAtHome += 1
-                        elif person['role'] == 'kid':
-                            self.kidsAtHome += 1
-                        elif person['role'] == 'tenant':
-                            self.tenantAtHome += 1
-                            entity_tenant = True
-                        elif person['role'] == 'housekeeper':
-                            self.housekeeperAtHome += 1
-                        break
+                    if 'outside' in person:
+                        if self.get_state(person['outside'], namespace = self.HASS_namespace) == 'on':
+                            return
+                    person.update(
+                        {'state': new }
+                    )
+                    if person['role'] == 'adult':
+                        if self.adultAtHome == 0:
+                            if self.stop_vacuum:
+                                for robot in self.vacuum:
+                                    if self.get_state(robot) == 'cleaning':
+                                        self.call_service('vacuum/return_to_base', entity_id = robot, namespace = self.HASS_namespace)
+                                self.stop_vacuum = False
+                        self.adultAtHome += 1
+                    elif person['role'] == 'kid':
+                        self.kidsAtHome += 1
+                    elif person['role'] == 'tenant':
+                        self.tenantAtHome += 1
+                        entity_tenant = True
+                    elif person['role'] == 'housekeeper':
+                        self.housekeeperAtHome += 1
+                    break
 
             if (
                 self.adultAtHome + self.kidsAtHome >= 1
@@ -701,7 +715,6 @@ class ModeManagement(Hass):
                 )
                 if self.current_MODE == AWAY_TRANSLATE:
                     self.stop_alarm()
-
 
         elif old == 'home':
             start_vacuum = False
@@ -782,7 +795,7 @@ class ModeManagement(Hass):
         """
         if not self.alarm_active:
             for sensor in self.alarmsensors:
-                handle = self.listen_state(self.sensor_activated, sensor,
+                handle = self.listen_state(self._sensor_activated, sensor,
                     new = 'on',
                     namespace = self.HASS_namespace
                 )
@@ -803,7 +816,7 @@ class ModeManagement(Hass):
         self.alarm_active = False
 
 
-    def sensor_activated(self, entity, attribute, old, new, kwargs) -> None:
+    def _sensor_activated(self, entity, attribute, old, new, kwargs) -> None:
         """ Listens for sensors to send notification if triggered and play music.
         """
         for person in self.presence:
@@ -820,7 +833,7 @@ class ModeManagement(Hass):
                 also_if_not_home = True
             )
             self.nofify_on_alarm = False
-            self.run_in(self.reset_alarm_notification, 600)
+            self.run_in(self._reset_alarm_notification, 600)
 
         for play_media in self.alarm_media:
             self.call_service('media_player/select_source',
@@ -848,12 +861,12 @@ class ModeManagement(Hass):
             media_content_type = 'music',
             namespace = self.HASS_namespace
         )
-        self.run_in(self.reset_soundlevel, 10,
+        self.run_in(self._reset_soundlevel, 10,
             play_media = play_media
         )
 
 
-    def reset_soundlevel(self, **kwargs) -> None:
+    def _reset_soundlevel(self, **kwargs) -> None:
         """ Sets sound level back to normal volume after alarm.
         """
         play_media = kwargs['play_media']
@@ -864,7 +877,7 @@ class ModeManagement(Hass):
         )
 
 
-    def reset_alarm_notification(self, kwargs) -> None:
+    def _reset_alarm_notification(self, kwargs) -> None:
         """ Resets timer so that any sensors triggered it will send a new notification.
         """
         self.nofify_on_alarm = True

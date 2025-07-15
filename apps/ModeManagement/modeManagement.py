@@ -2,11 +2,22 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.11"
+__version__ = "0.1.12"
 
 from appdaemon.plugins.hass.hassapi import Hass
 import datetime
 import json
+
+NORMAL_TRANSLATE:str = 'normal'
+MORNING_TRANSLATE:str = 'morning'
+AWAY_TRANSLATE:str = 'away'
+OFF_TRANSLATE:str = 'off'
+NIGHT_TRANSLATE:str = 'night'
+CUSTOM_TRANSLATE:str = 'custom'
+FIRE_TRANSLATE:str = 'fire'
+FALSE_ALARM_TRANSLATE:str = 'false-alarm'
+WASH_TRANSLATE:str = 'wash'
+RESET_TRANSLATE:str = 'reset'
 
 @staticmethod
 def split_around_underscore(input_string):
@@ -28,7 +39,37 @@ class ModeManagement(Hass):
         # Namespaces for HASS and MQTT
         self.HASS_namespace:str = self.args.get('HASS_namespace', 'default')
         self.MQTT_namespace:str = self.args.get('MQTT_namespace', 'default')
-
+        
+        self.event_listen_str:str = 'MODE_CHANGE'
+        language = self.args.get('lightwand_language', 'en')
+        language_file = self.args.get('language_file', '/conf/apps/Lightwand/translations.json')
+        try:
+            with open(language_file) as lang:
+                translations = json.load(lang)
+        except FileNotFoundError:
+            self.log("Translation file not found", level = 'DEBUG')
+        else:
+            self.event_listen_str = translations[language]['MODE_CHANGE']
+            global NORMAL_TRANSLATE
+            NORMAL_TRANSLATE = translations[language]['normal']
+            global MORNING_TRANSLATE
+            MORNING_TRANSLATE = translations[language]['morning']
+            global AWAY_TRANSLATE
+            AWAY_TRANSLATE = translations[language]['away']
+            global OFF_TRANSLATE
+            OFF_TRANSLATE = translations[language]['off']
+            global NIGHT_TRANSLATE
+            NIGHT_TRANSLATE = translations[language]['night']
+            global CUSTOM_TRANSLATE
+            CUSTOM_TRANSLATE = translations[language]['custom']
+            global FIRE_TRANSLATE
+            FIRE_TRANSLATE = translations[language]['fire']
+            global FALSE_ALARM_TRANSLATE
+            FALSE_ALARM_TRANSLATE = translations[language]['false-alarm']
+            global WASH_TRANSLATE
+            WASH_TRANSLATE = translations[language]['wash']
+            global RESET_TRANSLATE
+            RESET_TRANSLATE = translations[language]['reset']
 
         # Set up notification
         self.notify_reciever = self.args.get('notify_reciever', [])
@@ -179,11 +220,11 @@ class ModeManagement(Hass):
             if self.haLightModeText:
                 self.current_MODE = self.get_state(self.haLightModeText, namespace = self.HASS_namespace)
             elif self.now_is_between('02:00:00', '05:00:00'):
-                self.current_MODE = 'night'
+                self.current_MODE = NIGHT_TRANSLATE
             else:
-                self.current_MODE = 'normal'
+                self.current_MODE = NORMAL_TRANSLATE
         else:
-            self.current_MODE = 'away'
+            self.current_MODE = AWAY_TRANSLATE
             self.start_alarm()
 
 
@@ -217,7 +258,7 @@ class ModeManagement(Hass):
 
         if (
             self.now_is_between(self.morning_runtime, self.execute_morning)
-            and self.current_MODE == 'night'
+            and self.current_MODE == NIGHT_TRANSLATE
         ):
             self.run_in(self.waiting_for_morning, 1)
 
@@ -271,14 +312,14 @@ class ModeManagement(Hass):
 
         if (
             self.now_is_between(self.night_runtime, self.execute_night)
-            and self.current_MODE != 'night'
+            and self.current_MODE != NIGHT_TRANSLATE
         ):
             self.run_in(self.waiting_for_night, 1)
         self.run_daily(self.good_night_now, self.execute_night)
 
 
         # Listens for mode events
-        self.listen_event(self.mode_event, "MODE_CHANGE", namespace = self.HASS_namespace)
+        self.listen_event(self.mode_event, self.event_listen_str, namespace = self.HASS_namespace)
 
 
     def mode_event(self, event_name, data, kwargs) -> None:
@@ -290,17 +331,17 @@ class ModeManagement(Hass):
             modename = data['mode']
         # Morning
         if (
-            self.current_MODE == 'morning'
+            self.current_MODE == MORNING_TRANSLATE
             and self.now_is_between(self.morning_runtime, self.execute_morning)
-            and modename == 'off'
+            and modename == OFF_TRANSLATE
             and roomname is not None
         ):
             return
         if (
-            self.current_MODE == 'night'
+            self.current_MODE == NIGHT_TRANSLATE
             and self.now_is_between(self.morning_runtime, self.execute_morning)
-            and (modename == 'normal'
-            or modename == 'morning')
+            and (modename == NORMAL_TRANSLATE
+            or modename == MORNING_TRANSLATE)
         ):
                 for item in self.turn_on_in_the_morning:
                     if self.get_state(item, namespace = self.HASS_namespace) == 'off':
@@ -310,7 +351,7 @@ class ModeManagement(Hass):
 
         # Night
         if (
-            data['mode'] == 'night'
+            data['mode'] == NIGHT_TRANSLATE
             and self.now_is_between(self.night_runtime, self.execute_night)
         ):
             for item in self.turn_off_at_night:
@@ -322,15 +363,17 @@ class ModeManagement(Hass):
             self.enableRelockDoor()
 
         # Away
-        if data['mode'] == 'away':
+        if data['mode'] == AWAY_TRANSLATE:
             self.start_alarm()
 
             self.enableRelockDoor()
 
+        # TODO Add fire / false_alarm and break/ recall last
+
         # Set mode
         if roomname is None:
-            if modename == 'reset':
-                self.current_MODE = 'normal'
+            if modename == RESET_TRANSLATE:
+                self.current_MODE = NORMAL_TRANSLATE
             else:
                 self.current_MODE = modename
 
@@ -381,7 +424,7 @@ class ModeManagement(Hass):
     def waiting_for_morning(self, kwargs) -> None:
         """ Starts listening for sensors activating morning/normal mode.
         """
-        if self.current_MODE != 'away':
+        if self.current_MODE != AWAY_TRANSLATE:
             if self.keep_mode_when_outside is not None:
                 self.turn_off(self.keep_mode_when_outside, namespace = self.HASS_namespace)
 
@@ -406,8 +449,8 @@ class ModeManagement(Hass):
     def changeMorningToDay(self, kwargs) -> None:
         """ Changes mode from morning to normal at given time.
         """
-        if self.current_MODE == 'morning':
-            self.fire_event('MODE_CHANGE', mode = 'normal', namespace = self.HASS_namespace)
+        if self.current_MODE == MORNING_TRANSLATE:
+            self.fire_event(self.event_listen_str, mode = NORMAL_TRANSLATE, namespace = self.HASS_namespace)
 
 
     def waking_up(self, entity, attribute, old, new, kwargs) -> None:
@@ -417,17 +460,17 @@ class ModeManagement(Hass):
             self.now_is_between(self.morning_runtime, self.morning_to_day)
             and self.get_state(self.workday, namespace = self.HASS_namespace) == 'on'
         ):
-            self.fire_event('MODE_CHANGE', mode = 'morning', namespace = self.HASS_namespace)
+            self.fire_event(self.event_listen_str, mode = MORNING_TRANSLATE, namespace = self.HASS_namespace)
         else:
-            self.fire_event('MODE_CHANGE', mode = 'normal', namespace = self.HASS_namespace)
+            self.fire_event(self.event_listen_str, mode = NORMAL_TRANSLATE, namespace = self.HASS_namespace)
         self.cancel_listening_for_morning(0)
 
 
     def going_to_bed(self, entity, attribute, old, new, kwargs) -> None:
         """ Reacts to night sensors
         """
-        if self.current_MODE != 'away':
-            self.fire_event("MODE_CHANGE", mode = 'night', namespace = self.HASS_namespace)
+        if self.current_MODE != AWAY_TRANSLATE:
+            self.fire_event(self.event_listen_str, mode = NIGHT_TRANSLATE, namespace = self.HASS_namespace)
         self.cancel_listening_for_night()
 
 
@@ -435,10 +478,10 @@ class ModeManagement(Hass):
         """ Change to normal day light at this time if mode is night or morning.
         """
         if (
-            self.current_MODE == 'night'
-            or self.current_MODE == 'morning'
+            self.current_MODE == NIGHT_TRANSLATE
+            or self.current_MODE == MORNING_TRANSLATE
         ):
-            self.fire_event("MODE_CHANGE", mode = 'normal', namespace = self.HASS_namespace)
+            self.fire_event(self.event_listen_str, mode = NORMAL_TRANSLATE, namespace = self.HASS_namespace)
         self.cancel_listening_for_morning(0)
 
 
@@ -446,10 +489,10 @@ class ModeManagement(Hass):
         """ Change to night at the given time.
         """
         if (
-            self.current_MODE != 'away'
-            and self.current_MODE != 'night'
+            self.current_MODE != AWAY_TRANSLATE
+            and self.current_MODE != NIGHT_TRANSLATE
         ):
-            self.fire_event("MODE_CHANGE", mode = 'night', namespace = self.HASS_namespace)
+            self.fire_event(self.event_listen_str, mode = NIGHT_TRANSLATE, namespace = self.HASS_namespace)
         self.cancel_listening_for_night()
 
 
@@ -518,11 +561,11 @@ class ModeManagement(Hass):
                 if person['role'] == 'housekeeper':
                     if (
                         data['last_unlock_user'] == person['lock_user']
-                        and self.current_MODE == 'away'
+                        and self.current_MODE == AWAY_TRANSLATE
                         and self.housekeeperAtHome >= 1
                     ):
-                        self.current_MODE = 'wash'
-                        self.fire_event("MODE_CHANGE", mode = 'wash', namespace = self.HASS_namespace)
+                        self.current_MODE = WASH_TRANSLATE
+                        self.fire_event(self.event_listen_str, mode = WASH_TRANSLATE, namespace = self.HASS_namespace)
                         data = {
                             'tag' : 'housekeeperdoor'
                             }
@@ -572,7 +615,7 @@ class ModeManagement(Hass):
         """
         # React to manual switches
         if new == 'on':
-            new = 'away'
+            new = AWAY_TRANSLATE
             old = 'home'
             for person in self.presence:
                 if person['outside'] == entity:
@@ -617,9 +660,9 @@ class ModeManagement(Hass):
                 self.adultAtHome + self.kidsAtHome >= 1
                 and not entity_tenant
             ):
-                if self.current_MODE == 'away':
-                    self.current_MODE = 'normal'
-                    self.fire_event("MODE_CHANGE", mode = 'normal')
+                if self.current_MODE == AWAY_TRANSLATE:
+                    self.current_MODE = NORMAL_TRANSLATE
+                    self.fire_event(self.event_listen_str, mode = NORMAL_TRANSLATE)
                     self.stop_alarm()
 
                 if self.away_handler is not None:
@@ -649,7 +692,7 @@ class ModeManagement(Hass):
                     also_if_not_home = True,
                     data = data
                 )
-                if self.current_MODE == 'away':
+                if self.current_MODE == AWAY_TRANSLATE:
                     self.stop_alarm()
 
 
@@ -673,11 +716,11 @@ class ModeManagement(Hass):
                     
                     if (
                         'stopMorning' in person
-                        and self.current_MODE == 'morning'
+                        and self.current_MODE == MORNING_TRANSLATE
                         and self.adultAtHome + self.kidsAtHome + self.housekeeperAtHome != 0
                     ):
-                        self.current_MODE = 'normal'
-                        self.fire_event("MODE_CHANGE", mode = 'normal', namespace = self.HASS_namespace)
+                        self.current_MODE = NORMAL_TRANSLATE
+                        self.fire_event(self.event_listen_str, mode = NORMAL_TRANSLATE, namespace = self.HASS_namespace)
 
                     break
 
@@ -685,7 +728,7 @@ class ModeManagement(Hass):
                 if self.get_state(self.keep_mode_when_outside, namespace = self.HASS_namespace) == 'on':
                     return
                 if (
-                    str(self.current_MODE)[:5] == 'night'
+                    str(self.current_MODE)[:5] == NIGHT_TRANSLATE
                     and self.now_is_between(self.night_runtime, self.morning_runtime)
                 ):
                    return
@@ -721,9 +764,9 @@ class ModeManagement(Hass):
             if self.housekeeperAtHome == 0:
                 self.start_alarm()
 
-                if self.current_MODE != 'away':
-                    self.current_MODE = 'away'
-                    self.fire_event("MODE_CHANGE", mode = 'away', namespace = self.HASS_namespace)
+                if self.current_MODE != AWAY_TRANSLATE:
+                    self.current_MODE = AWAY_TRANSLATE
+                    self.fire_event(self.event_listen_str, mode = AWAY_TRANSLATE, namespace = self.HASS_namespace)
 
 
         #Function to handle notification when nobody is home

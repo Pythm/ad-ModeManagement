@@ -150,28 +150,14 @@ class ModeManagement(Hass):
 
             if 'outside' in person:
                 self.listen_state(self._presenceChange, person['outside'], namespace = self.HASS_namespace)
-            elif person['role'] in ['adult', 'kid']:
-                name:str = person['person']
-                if name[:6] == 'person':
-                    name = name[7:]
-                elif name[:14] == 'device_tracker':
-                    name = name[14:]
-                person['outside'] = 'input_boolean.outside_' + name
-
-            if 'outside' in person:
-                if not self.entity_exists(person['outside'], namespace = self.HASS_namespace):
-                    self.call_service("state/set",
-                        entity_id = person['outside'],
-                        attributes = {'friendly_name' : str(person['person']) + ' Outside'},
-                        state = 'off',
-                        namespace = self.HASS_namespace
-                    )
 
             if person['state'] == 'home':
                 if person['role'] == 'adult':
                     self.adultAtHome += 1
                 if person['role'] == 'kid':
                     self.kidsAtHome += 1
+                if person['role'] == 'family':
+                    self.extendedFamilyAtHome += 1
                 if person['role'] == 'tenant':
                     self.tenantAtHome += 1
                 if person['role'] == 'housekeeper':
@@ -192,7 +178,7 @@ class ModeManagement(Hass):
         # Start vacuum robots when no adults is home
         self.vacuum = self.args.get('vacuum',[])
         self.prevent_vacuum = self.args.get('prevent_vacuum', [])
-        self.stop_vacuum:bool = False
+        self.enable_stop_vacuum:bool = False
 
 
         # MQTT Door lock
@@ -324,8 +310,20 @@ class ModeManagement(Hass):
         if (
             self.adultAtHome == 0
             and self.kidsAtHome == 0
-            and self.housekeeperAtHome == 0
+            and self.extendedFamilyAtHome == 0
             and self.tenantAtHome == 0
+            and self.housekeeperAtHome == 0
+        ):
+            return False
+        return True
+
+
+    def anyone_at_main_house_home(self) -> bool:
+        if (
+            self.adultAtHome == 0
+            and self.kidsAtHome == 0
+            and self.extendedFamilyAtHome == 0
+            and self.housekeeperAtHome == 0
         ):
             return False
         return True
@@ -596,8 +594,6 @@ class ModeManagement(Hass):
                 if 'lock_user' in person:
                     if data['last_unlock_user'] == person['lock_user']:
                         if not person['last_lock']:
-                            if 'outside' in person:
-                                self.turn_off(person['outside'], namespace = self.HASS_namespace)
                             person.update(
                                 {'last_lock' : True}
                             )
@@ -618,13 +614,7 @@ class ModeManagement(Hass):
     def _vacation_ending(self, entity, attribute, old, new, kwargs) -> None:
         """ Ends vacation when switch/button is turned off.
         """
-        for robot in self.vacuum:
-            if (
-                (self.get_state(robot, namespace = self.HASS_namespace) == 'docked'
-                or self.get_state(robot, namespace = self.HASS_namespace) == 'charging')
-                and self.get_state(robot, attribute='battery_level', namespace = self.HASS_namespace) > 40
-            ):
-                self.call_service('vacuum/start', entity_id = robot, namespace = self.HASS_namespace)
+        self.start_vacuum()
 
 
     def _presenceChange(self, entity, attribute, old, new, kwargs) -> None:
@@ -661,15 +651,13 @@ class ModeManagement(Hass):
                         {'state': new }
                     )
                     if person['role'] == 'adult':
-                        if self.adultAtHome == 0:
-                            if self.stop_vacuum:
-                                for robot in self.vacuum:
-                                    if self.get_state(robot) == 'cleaning':
-                                        self.call_service('vacuum/return_to_base', entity_id = robot, namespace = self.HASS_namespace)
-                                self.stop_vacuum = False
+                        self.stop_vacuum()
                         self.adultAtHome += 1
                     elif person['role'] == 'kid':
                         self.kidsAtHome += 1
+                    elif person['role'] == 'family':
+                        self.stop_vacuum()
+                        self.extendedFamilyAtHome += 1
                     elif person['role'] == 'tenant':
                         self.tenantAtHome += 1
                         entity_tenant = True
@@ -678,7 +666,7 @@ class ModeManagement(Hass):
                     break
 
             if (
-                self.adultAtHome + self.kidsAtHome >= 1
+                self.adultAtHome + self.kidsAtHome + self.extendedFamilyAtHome >= 1
                 and not entity_tenant
             ):
                 if self.current_MODE == AWAY_TRANSLATE:
@@ -717,7 +705,7 @@ class ModeManagement(Hass):
                     self.stop_alarm()
 
         elif old == 'home':
-            start_vacuum = False
+            enable_start_vacuum = False
 
             for person in self.presence:
                 if person['person'] == entity:
@@ -726,9 +714,11 @@ class ModeManagement(Hass):
                     )
                     if person['role'] == 'adult':
                         self.adultAtHome -= 1
-                        start_vacuum = True
+                        enable_start_vacuum = True
                     elif person['role'] == 'kid':
                         self.kidsAtHome -= 1
+                    elif person['role'] == 'family':
+                        self.extendedFamilyAtHome -= 1
                     elif person['role'] == 'tenant':
                         self.tenantAtHome -= 1
                     elif person['role'] == 'housekeeper':
@@ -737,7 +727,7 @@ class ModeManagement(Hass):
                     if (
                         'stopMorning' in person
                         and self.current_MODE == MORNING_TRANSLATE
-                        and self.adultAtHome + self.kidsAtHome + self.housekeeperAtHome != 0
+                        and self.anyone_at_main_house_home()
                     ):
                         self.current_MODE = NORMAL_TRANSLATE
                         self.fire_event(self.event_listen_str, mode = NORMAL_TRANSLATE, namespace = self.HASS_namespace)
@@ -755,38 +745,29 @@ class ModeManagement(Hass):
 
                 self.enableRelockDoor()
 
-                self.away_handler = self.run_in(self.setAwayMode, self.delay_before_setting_away, start_vacuum = start_vacuum)
+                self.away_handler = self.run_in(self.setAwayMode, self.delay_before_setting_away, enable_start_vacuum = enable_start_vacuum)
 
 
     def setAwayMode(self, **kwargs) -> None:
         """ Sets away mode.
         """
-        start_vacuum = kwargs['start_vacuum']
+        enable_start_vacuum = kwargs['enable_start_vacuum']
         for item in self.prevent_vacuum:
             if self.get_state(item, namespace = self.HASS_namespace) == 'on':
-                start_vacuum = False
+                enable_start_vacuum = False
         if (
             self.get_state(self.away_state, namespace = self.HASS_namespace) == 'off'
             and self.now_is_between(self.morning_runtime, '18:00:00')
-            and start_vacuum
+            and enable_start_vacuum
         ):
-            for robot in self.vacuum:
-                if (
-                    (self.get_state(robot, namespace = self.HASS_namespace) == 'docked'
-                    or self.get_state(robot, namespace = self.HASS_namespace) == 'charging')
-                    and self.get_state(robot, attribute='battery_level', namespace = self.HASS_namespace) > 40
-                ):
-                    self.call_service('vacuum/start', entity_id = robot, namespace = self.HASS_namespace)
-                    self.stop_vacuum = True
+            self.start_vacuum()
 
+        if not self.anyone_at_main_house_home():
+            self.start_alarm()
 
-        if self.kidsAtHome == 0:
-            if self.housekeeperAtHome == 0:
-                self.start_alarm()
-
-                if self.current_MODE != AWAY_TRANSLATE:
-                    self.current_MODE = AWAY_TRANSLATE
-                    self.fire_event(self.event_listen_str, mode = AWAY_TRANSLATE, namespace = self.HASS_namespace)
+            if self.current_MODE != AWAY_TRANSLATE:
+                self.current_MODE = AWAY_TRANSLATE
+                self.fire_event(self.event_listen_str, mode = AWAY_TRANSLATE, namespace = self.HASS_namespace)
 
 
         #Function to handle notification when nobody is home
@@ -881,6 +862,24 @@ class ModeManagement(Hass):
         """ Resets timer so that any sensors triggered it will send a new notification.
         """
         self.nofify_on_alarm = True
+
+
+    def stop_vacuum(self) -> None:
+        if self.enable_stop_vacuum:
+            for robot in self.vacuum:
+                if self.get_state(robot) == 'cleaning':
+                    self.call_service('vacuum/return_to_base', entity_id = robot, namespace = self.HASS_namespace)
+            self.enable_stop_vacuum = False
+
+    def start_vacuum(self) -> None:
+        for robot in self.vacuum:
+            if (
+                (self.get_state(robot, namespace = self.HASS_namespace) == 'docked'
+                or self.get_state(robot, namespace = self.HASS_namespace) == 'charging')
+                and self.get_state(robot, attribute='battery_level', namespace = self.HASS_namespace) > 40
+            ):
+                self.call_service('vacuum/start', entity_id = robot, namespace = self.HASS_namespace)
+                self.enable_stop_vacuum = True
 
 
 class Notify_Mobiles:

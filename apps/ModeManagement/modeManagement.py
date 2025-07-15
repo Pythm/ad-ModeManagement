@@ -307,16 +307,13 @@ class ModeManagement(Hass):
             )
             self.execute_night = '02:00:00'
 
-
         self.run_daily(self.waiting_for_night, self.night_runtime)
-
         if (
             self.now_is_between(self.night_runtime, self.execute_night)
             and self.current_MODE != NIGHT_TRANSLATE
         ):
             self.run_in(self.waiting_for_night, 1)
         self.run_daily(self.good_night_now, self.execute_night)
-
 
         # Listens for mode events
         self.listen_event(self.mode_event, self.event_listen_str, namespace = self.HASS_namespace)
@@ -368,7 +365,17 @@ class ModeManagement(Hass):
 
             self.enableRelockDoor()
 
-        # TODO Add fire / false_alarm and break/ recall last
+        elif data['mode'] == FALSE_ALARM_TRANSLATE:
+            modename = self.current_MODE
+            self.fire_event(self.event_listen_str, mode = self.current_MODE, namespace = self.HASS_namespace)
+
+        elif data['mode'] == FIRE_TRANSLATE:
+            self.call_service('input_text/set_value',
+                value = FIRE_TRANSLATE,
+                entity_id = self.haLightModeText,
+                namespace = self.HASS_namespace
+            )
+            return
 
         # Set mode
         if roomname is None:

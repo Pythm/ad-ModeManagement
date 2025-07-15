@@ -40,6 +40,10 @@ manageModes:
 ```
 
 ## Set up Mode behaviour
+
+> [!TIP]
+> ModeManagement now supports the same translation on Modes as Lightwand. Check out the documentation for Lightwand in the [translation section](https://github.com/Pythm/ad-Lightwand?tab=readme-ov-file#translating-or-changing-modes) to listen for another event than "MODE_CHANGE" or use your own names for the pre defined mode names.
+
 This app's behavior is based on listening to sensors and some automated times if sensors are not triggered.
 Modes will not change with vacation switch on.
 

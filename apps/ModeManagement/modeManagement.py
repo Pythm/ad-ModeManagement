@@ -592,7 +592,6 @@ class ModeManagement(Hass):
                                 {'last_lock' : True}
                             )
                         if not self.anyone_at_main_house_home():
-                            self.log(f"Last unlock person is {person['person']} and no one is home") ###
                             self.nofify_on_alarm = False
                             self.run_in(self._reset_alarm_notification, 20)
                     else:

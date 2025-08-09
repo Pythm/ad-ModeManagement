@@ -633,9 +633,9 @@ class ModeManagement(Hass):
                 if 'outside' in person:
                     if person['outside'] == entity:
                         entity = person['person']
-                        self.log(f"{person['person']} is: {self.get_state(person['person'], namespace = self.HASS_namespace)} when turning off outside switch") ###
                         if self.get_state(person['person'], namespace = self.HASS_namespace) == 'home':
                             new = 'home'
+
 
         # React to presence trackers
         if new == 'home':
@@ -677,7 +677,6 @@ class ModeManagement(Hass):
                     if self.timer_running(self.away_handler):
                         try:
                             self.cancel_timer(self.away_handler)
-                            self.log(f"Stopped existing handler to stop setting away state", level = "INFO") ###
                         except Exception as e:
                             self.log(
                                 f"Was not able to stop existing handler to stop setting away state. {e}",

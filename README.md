@@ -1,235 +1,179 @@
-# ModeManagement by Pythm
-An example of automating modes with Appdaemon to set suitable lights using the [Lightwand](https://github.com/Pythm/ad-Lightwand) Appdaemon app and automate other entities and appliances based on presence. Lightwand listens to the event "MODE_CHANGE" in Home Assistant to set different light modes with 'normal' mode as the default setting.
 
-## Installation
-1. Download the `ModeManagement` directory from inside the `apps` directory here to your [Appdaemon](https://appdaemon.readthedocs.io/en/latest/) `apps` directory.
-2. Add the configuration to a .yaml or .toml file to enable the `ModeManagement` module.
+# ModeManagement by Pythm  
+**An example of automating modes with AppDaemon to set suitable lights using the [Lightwand](https://github.com/Pythm/ad-Lightwand) AppDaemon app and automate other entities and appliances based on presence.**  
 
+---
 
-## App Usage and Configuration
-> [!TIP]
-> All sections and configurations are optional, so you can use only what is applicable. This app was written to meet my family's needs and is only meant as an example, but can act as a good baseline for automating presence and day/night shifts in your home. All times is now configurable so it could be a little bit easier to adapt. See definitions below on app behaviour and adjust accordingly.
+## 🔍 Features  
+- **Light Mode Automation**: Listens to the `MODE_CHANGE` event in Home Assistant to set different light modes (e.g., `normal`, `night`, `wash`) using the [Lightwand](https://github.com/Pythm/ad-Lightwand) app.  
+- **Morning/Night Mode Triggers**: Uses presence, time, and sensor triggers to automatically switch between `normal`, `morning`, and `night` modes.  
+- **Vacation Mode**: Prevents mode changes when a user-defined `input_boolean.vacation` is active.  
+- **Door Lock Integration**: Supports MQTT-based door locks (e.g., Nimly) for auto-locking when no adults are home or during nighttime.  
+- **Vacuum Cleaner Automation**: Triggers vacuum cleaners when no adults are home and stops them if an adult returns.  
+- **Alarm Notifications**: Sends alerts via `notify_reciever` when sensors are triggered (e.g., open windows, motion) and no one is home.  
+- **Customizable Schedules**: All times and thresholds are configurable for flexibility.  
 
-## 📌 Notes
+---
 
-- `country_code` is used to find hollidays. Will attempt to fetch latitude/longitude from your AppDaemon configuration if not defined. Morning mode will not trigger on weekends and on hollidays.
-- Set a main vacation switch with `vacation` to prevent the app from changing modes while you are away for the night or longer.
-- Use a Home Assistant input_text helper to display current Light Mode configured with `HALightModeText`.
+## 🚨 Breaking Changes  
+### **1.2.0**  
+- **MQTT Namespace Update**: Default MQTT namespace changed to `'mqtt'` to align with AppDaemon defaults. 
 
+---
+
+## 🛠️ Installation  
+1. **Clone the repository** into your AppDaemon `apps` directory:  
+   ```bash
+   git clone https://github.com/Pythm/ad-ModeManagement.git /path/to/appdaemon/apps/
+   ```  
+2. **Configure the app** in your AppDaemon `.yaml` or `.toml` file:  
+   ```yaml
+   manageModes:
+     module: modeManagement
+     class: ModeManagement
+     country_code: 'NO'
+     vacation: input_boolean.vacation
+     notify_reciever:
+       - mobile_app_my_phone
+   ```  
+
+> 💡 **Tip**: Default values are used if parameters are omitted in the configuration.  
+
+---
+
+## 📌 Notes 
+- **Vacation Mode**: Prevents mode changes when `input_boolean.vacation` is active.  
+- **Holiday Detection**: Uses `country_code` to fetch holidays. If not defined, it attempts to find latitude/longitude from AppDaemon configuration.  
+- **MQTT Door Lock**: Tested with Nimly locks (use at your own risk due to potential MQTT bugs).  
+- **Vacuum Cleaner Behavior**: Vacuums start when no adults are home and return to dock if an adult returns.  
+
+---
+
+## 📚 Key Definitions  
+### **App-Level Configuration**  
+| Key                  | Type       | Default        | Description                                                                 |
+|----------------------|------------|----------------|-----------------------------------------------------------------------------|
+| `vacation`           | input_boolean | `input_boolean.vacation` | Input boolean to prevent mode changes during vacation.                      |
+| `HALightModeText`    | input_text | `input_text.lightmode` | Input text to display current light mode.                                   |
+| `notify_reciever`    | list       | (optional)     | List of devices to send notifications to (e.g., `mobile_app_your_phone`).   |
+| `MQTT_namespace`     | string     | `"mqtt"`       | MQTT namespace (optional).                             |
+| `HASS_namespace`     | string     | `"default"`    | Home Assistant namespace (optional).                                        |
+| `morning_start_listen_time` | string | `"06:00:00"` | Time to start listening for morning sensors.                                |
+| `execute_morning_at` | string     | `"10:00:00"`   | Time to execute morning mode.                                               |
+| `morning_to_normal`  | string     | `"09:00:00"`   | Time to switch to normal mode after morning.                                |
+| `night_start_listen_time` | string | `"22:00:00"` | Time to start listening for night sensors.                                  |
+| `execute_night_at`   | string     | `"02:00:00"`   | Time to execute night mode.                                                 |
+| `delay_before_setting_away` | int | `0` | Optional delay in seconds before setting away mode when no one is home.             |
+| `keep_mode_when_outside` | input_boolean | `input_boolean.keep_mode` | Prevents mode changes when away.                  |
+
+### **Mode Triggers**  
+| Key                  | Type       | Default        | Description                                                                 |
+|----------------------|------------|----------------|-----------------------------------------------------------------------------|
+| `morning_sensors`    | list       | (optional)     | Sensors to trigger morning mode.                                            |
+| `night_sensors`      | list       | (optional)     | Sensors to trigger night mode.                                              |
+| `turn_on_in_the_morning` | list | (optional)     | Entities to turn on in the morning.                                         |
+| `turn_off_at_night`  | list       | (optional)     | Entities to turn off at night.                                              |
+
+### **Presence Tracking**  
+| Key                  | Type       | Default        | Description                                                                 |
+|----------------------|------------|----------------|-----------------------------------------------------------------------------|
+| `presence`           | list       | (optional)     | List of persons with roles (`adult`, `kid`, `housekeeper`)                  |
+| `outside`            | string     | input_boolean  | Manually set person away.                                                   |
+| `lock_user`          | int        | (optional)     | Lock user ID for Nimly door locks.                                          |
+
+### **Vacuum Cleaners**  
+| Key                  | Type       | Default        | Description                                                                 |
+|----------------------|------------|----------------|-----------------------------------------------------------------------------|
+| `vacuum`             | list       | (optional)     | List of vacuum cleaner entities.                                            |
+| `prevent_vacuum`     | list       | (optional)     | Sensors to prevent vacuum cleaners from running.                            |
+
+### **Alarm Sensors**  
+| Key                  | Type       | Default        | Description                                                                 |
+|----------------------|------------|----------------|-----------------------------------------------------------------------------|
+| `alarmsensors`       | list       | (optional)     | Sensors to trigger notifications and media playback.                        |
+| `alarm_media`        | dict       | (optional)     | Playlist and media settings to play when alarmsensors are triggered.        |
+
+---
+
+## 🧩 Example Configuration  
 ```yaml
 manageModes:
   module: modeManagement
   class: ModeManagement
-  workday: binary_sensor.workday_sensor
+  country_code: 'NO'
   vacation: input_boolean.vacation
   HALightModeText: input_text.lightmode
   notify_reciever:
     - mobile_app_my_phone
-```
-
-> [!TIP]
-> You can use this app from other apps to check if anyone_home() or anyone_at_main_house_home(). Last one does not include tenants.
-
-
-## Set up Mode behaviour
-
-> [!TIP]
-> ModeManagement now supports the same translation on Modes as Lightwand. Check out the documentation for Lightwand in the [translation section](https://github.com/Pythm/ad-Lightwand?tab=readme-ov-file#translating-or-changing-modes) to listen for another event than "MODE_CHANGE" or use your own names for the pre defined mode names.
-
-This app's behavior is based on listening to sensors and some automated times if sensors are not triggered.
-Modes will not change with vacation switch on.
-
-### Morning
-The app starts listening for morning sensors at time configured with `morning_start_listen_time` and runs until `execute_morning_at`.
-
-To define Home Assistant sensors that trigger the morning mode, input them as a list under `morning_sensors` in configuration.
-
-You have the option to define a time the morning is changed to normal mode with `morning_to_normal`. This defaults to the time provided with `execute_morning_at`.
-
-If your mode is still night or morning at `execute_morning_at`, the mode will be set to normal.
-
-You have the option to turn on entities that have the state off with `turn_on_in_the_morning`. This only applies to entities with state `on` and `off`.
-
-```yaml
   morning_sensors:
     - binary_sensor.motion_detection
     - binary_sensor.presence_sensor
   morning_start_listen_time: '06:00:00'
   morning_to_normal: '09:00:00'
   execute_morning_at: '10:00:00'
-
-  turn_on_in_the_morning:
-    - switch.coffee_machine
-```
-
-### Night
-Night is basically a reverse of morning. Define your sensors with `night_sensors` in configuration. This will change the mode to night and turn off entities defined with `turn_off_at_night`. Only entities with state `on` will be turned off.
-
-The app starts listening at the sensors at `night_start_listen_time` and stops listening and changes mode to night at time configured with `execute_night_at`.
-
-```yaml
   night_sensors:
     - binary_sensor.window_door_is_open
   night_start_listen_time: '22:00:00'
   execute_night_at: '02:00:00'
-
   turn_off_at_night:
     - media_player.tv
-```
-
-## MQTT Door lock
-I have a Nimly door lock that I set to auto lock, when no adults are home and during nighttime.
-> [!NOTE]
-> The Nimly MQTT module seems buggy / not reporting correct user in the MQTT message. Use at own risk
-
-```yaml
   MQTT_door_lock:
     - zigbee2mqtt/NimlyDoor
-```
-
-## Presence
-Trackers/persons are configured with `person` and assign a `role` to each tracker, which can be 'adult' (default), 'kid' or 'housekeeper'.
-Each person can have an `outside` HA helper to manually set person away. This is useful when you are in close proximity and want the doors to auto lock.
-
-If no adults or kids are home, the mode will be set to `away`.
-
-If you define persons with a housekeeper role and only the housekeeper is present, the mode will be set to 'wash'. In Lightwand, the standard setting for 'wash' is 100% brightness.
-
-If you have a nimly door lock you can also spesify the lock ID for each person with `lock_user`.
-The unlock with id is programmed to set wash mode if person unlocking is defined as a "housekeeper" It is also programmed to reset the "outside" switch for person unlocking.
-
-```yaml
   presence:
     - person: person.me
       outside: input_boolean.outside_me
       role: adult
       lock_user: 0
-```
-
-In additon to the outside switch pr person you can configure one switch that prevents the app from setting away with `keep_mode_when_outside`. This is reset at the time defined with `morning_start_listen_time`.
-
-You can also set `delay_before_setting_away` as a delay in seconds before setting away mode when no one is home.
-
-### Vacuum cleaners
-If no adults are home, `vacuum` cleaners will start. They will return to their dock if an adult returns home. You can prevent them to start with sensors in the list `prevent_vacuum`.
-
-```yaml
   vacuum:
     - vacuum.roomba
     - vacuum.roborock
-
   prevent_vacuum:
     - media_player.tv
-```
-
-### Notificatons
-You can receive notifications on your devices by listing them under `notify_receiver`. When certain conditions are met, like when sensors are triggered and no one is home, you will receive notifications.
-
-You can also configure ModeManagement to use your own Notification app instead with `notify_app`. You'll need to have a function in your app to receive. ModeManagement sends one notification pr notify_receiver entry.
-```python
-    def send_notification(self, **kwargs) -> None:
-        message:str = kwargs['message']
-        message_title:str = kwargs.get('message_title', 'Home Assistant')
-        message_recipient:str = kwargs.get('message_recipient', True)
-        also_if_not_home:bool = kwargs.get('also_if_not_home', True)
-
-```
-
-### Alarm
-Set up sensors that will send you a notification if triggered. It only fires if no one is home and the vaccum cleaners is not running.
-
-```yaml
   alarmsensors:
     - binary_sensor.entrance_motion_motion_detection
     - cover.garage_door
     - binary_sensor.door_window_door_is_open
-```
-
-You can start a playlist in addition to sending notifications when a sensor is triggered.
-
-```yaml
-  alarm_media: # Play a playlist if alarmsensors is triggered
-    - amp: media_player.denon_avr_x3000 # Device to turn on
+  alarm_media:
+    - amp: media_player.denon_avr_x3000
       source: Roon
       volume: 0.5
       normal_volume: 0.33
-      player: media_player.yourplayer # Device to start playing from
+      player: media_player.yourplayer
       playlist: 'Library/Artists/Alarm/Alarm'
 ```
 
-### Namespace
-If you have defined a namespace for MQTT other than default you need to define your namespace with `MQTT_namespace`. Same for HASS you need to define your namespace with `HASS_namespace`.
+---
 
-## Putting it all togehter
-Easisest to start off with is to copy this example and update with your sensors and lights and build from that.
+## 📌 Tips & Best Practices  
+- Use **`input_boolean`** to toggle automation on/off with `vacation`. 
+- **Vacuum cleaners** will not run if `prevent_vacuum` sensors are active.  
+- Use **`input_text`** (`HALightModeText`) to display the current light mode.
+- Supports the same translation on Modes as Lightwand. Check out the documentation for Lightwand in the translation section to listen for another event than "MODE_CHANGE" or use your own names for the predefined mode names.
+- Define morning_start_listen_time and night_start_listen_time to align with your household’s schedule.
 
+---
 
-```yaml
-manageModes:
-  module: modeManagement
-  class: ModeManagement
-  workday: binary_sensor.workday_sensor
-  vacation: input_boolean.vacation
-  HALightModeText: input_text.lightmode
-  notify_reciever:
-    - mobile_app_my_phone
+## 📢 Notifications  
+- Configure `notify_reciever` with a list of devices (e.g., `mobile_app_your_phone`).  
+- Use a custom notification app with the `send_notification` method.  
 
-  morning_sensors:
-    - binary_sensor.motion_detection
-    - binary_sensor.presence_sensor
-  morning_start_listen_time: '06:00:00'
-  morning_to_normal: '09:00:00'
-  execute_morning_at: '10:00:00'
+---
 
-  night_sensors:
-    - binary_sensor.window_door_is_open
-  night_start_listen_time: '22:00:00'
-  execute_night_at: '02:00:00'
+## 📌 License  
+[MIT License](https://github.com/Pythm/ad-ModeManagement/blob/main/LICENSE)  
 
-  turn_off_at_night:
-    - media_player.tv
+---
 
-  MQTT_door_lock:
-    - zigbee2mqtt/NimlyDoor
+## 📈 Roadmap  
+- Nothing planned
 
-  presence:
-    - person: person.me
-      outside: input_boolean.outside_me
-      role: adult
-      lock_user: 0
+---
 
-  vacuum:
-    - vacuum.roomba
-    - vacuum.roborock
+## 🙋 Contributing  
+- Found a bug? Open an issue or submit a PR!  
+- Want to add a feature? Discuss in the [GitHub Discussions](https://github.com/Pythm/ad-ModeManagement/discussions).  
 
-  prevent_vacuum:
-    - media_player.tv
+---
 
-  alarmsensors:
-    - binary_sensor.entrance_motion_motion_detection
-    - cover.garage_door
-    - binary_sensor.door_window_door_is_open
-
-  alarm_media: # Play a playlist if alarmsensors is triggered
-    - amp: media_player.denon_avr_x3000 # Device to turn on
-      source: Roon
-      volume: 0.5
-      normal_volume: 0.33
-      player: media_player.yourplayer # Device to start playing from
-      playlist: 'Library/Artists/Alarm/Alarm'
-```
-
-key | optional | type | default | description
--- | -- | -- | -- | --
-`module` | False | string | | The module name of the app.
-`class` | False | string | | The name of the Class.
-`workday` | True | string | `binary_sensor.workday_sensor`| HA workday sensor: https://www.home-assistant.io/integrations/workday/
-`vacation` | True | string | `input_boolean.vacation`|  HA input_boolean for vacations to not setting morning/normal/night mode when away
-`turn_off_at_night` | True | list || Items to turn off automatically at night
-`morning_sensors` | True | list || Sensors to trigger morning mode or normal mode if not workday
-`night_sensors` | True | list || Sensors to trigger night mode and turn off items
-`presence` | False | dictionary || Tracking of who is home
-`vacuum` | True | list || Vacuum cleaners
-`alarmsensors` | True | list || HA sensors for notification and start media playing
-`notify_reciever` | True | list || Receivers for notifications
-`alarm_media` | True | dictionary || Play a playlist if alarmsensor is triggered
+**ModeManagement by [Pythm](https://github.com/Pythm)**  
+[GitHub](https://github.com/Pythm/ad-ModeManagement)

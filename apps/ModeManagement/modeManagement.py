@@ -22,7 +22,7 @@ WASH_TRANSLATE:str = 'wash'
 RESET_TRANSLATE:str = 'reset'
 
 @staticmethod
-def split_around_underscore(input_string):
+def _split_around_underscore(input_string):
     index = input_string.find('_')
     
     if index != -1:
@@ -32,15 +32,15 @@ def split_around_underscore(input_string):
     else:
         return None, None
 
+
 class ModeManagement(Hass):
 
     def initialize(self):
-
         self.mqtt = None
 
         # Namespaces for HASS and MQTT
         self.HASS_namespace:str = self.args.get('HASS_namespace', 'default')
-        self.MQTT_namespace:str = self.args.get('MQTT_namespace', 'default')
+        self.MQTT_namespace:str = self.args.get('MQTT_namespace', 'mqtt')
         
         self.event_listen_str:str = 'MODE_CHANGE'
         language = self.args.get('lightwand_language', 'en')
@@ -338,7 +338,7 @@ class ModeManagement(Hass):
         """ Listens to mode events and reacts on night, morning, normal.
             Also updates the input_text with mode.
         """
-        modename, roomname = split_around_underscore(data['mode'])
+        modename, roomname = _split_around_underscore(data['mode'])
         if modename is None:
             modename = data['mode']
         # Morning

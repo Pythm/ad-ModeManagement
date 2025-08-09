@@ -10,23 +10,11 @@ An example of automating modes with Appdaemon to set suitable lights using the [
 > [!TIP]
 > All sections and configurations are optional, so you can use only what is applicable. This app was written to meet my family's needs and is only meant as an example, but can act as a good baseline for automating presence and day/night shifts in your home. All times is now configurable so it could be a little bit easier to adapt. See definitions below on app behaviour and adjust accordingly.
 
-Set a main vacation switch with `vacation` to prevent the app from changing modes while you are away for the night or longer.
+## 📌 Notes
 
-This app uses a Workday sensor configured with `workday` to change light to Normal and not Morning on weekends and on holidays, when sensor is off. It will look for `binary_sensor.workday_sensor` if none is defined. To install the sensor in HA visit [Home Assistant Workday integration](https://www.home-assistant.io/integrations/workday/)
-
-You can receive notifications on your devices by listing them under `notify_receiver`. When certain conditions are met, like when sensors are triggered and no one is home, you will receive notifications.
-
-You can also configure ModeManagement to use your own Notification app instead with `notify_app`. You'll need to have a function in your app to receive. ModeManagement sends one notification pr notify_receiver entry.
-```python
-    def send_notification(self, **kwargs) -> None:
-        message:str = kwargs['message']
-        message_title:str = kwargs.get('message_title', 'Home Assistant')
-        message_recipient:str = kwargs.get('message_recipient', True)
-        also_if_not_home:bool = kwargs.get('also_if_not_home', True)
-
-```
-
-Use a Home Assistant input_text helper to display current Light Mode configured with `HALightModeText`.
+- `country_code` is used to find hollidays. Will attempt to fetch latitude/longitude from your AppDaemon configuration if not defined. Morning mode will not trigger on weekends and on hollidays.
+- Set a main vacation switch with `vacation` to prevent the app from changing modes while you are away for the night or longer.
+- Use a Home Assistant input_text helper to display current Light Mode configured with `HALightModeText`.
 
 ```yaml
 manageModes:
@@ -38,6 +26,10 @@ manageModes:
   notify_reciever:
     - mobile_app_my_phone
 ```
+
+> [!TIP]
+> You can use this app from other apps to check if anyone_home() or anyone_at_main_house_home(). Last one does not include tenants.
+
 
 ## Set up Mode behaviour
 
@@ -128,6 +120,19 @@ If no adults are home, `vacuum` cleaners will start. They will return to their d
 
   prevent_vacuum:
     - media_player.tv
+```
+
+### Notificatons
+You can receive notifications on your devices by listing them under `notify_receiver`. When certain conditions are met, like when sensors are triggered and no one is home, you will receive notifications.
+
+You can also configure ModeManagement to use your own Notification app instead with `notify_app`. You'll need to have a function in your app to receive. ModeManagement sends one notification pr notify_receiver entry.
+```python
+    def send_notification(self, **kwargs) -> None:
+        message:str = kwargs['message']
+        message_title:str = kwargs.get('message_title', 'Home Assistant')
+        message_recipient:str = kwargs.get('message_recipient', True)
+        also_if_not_home:bool = kwargs.get('also_if_not_home', True)
+
 ```
 
 ### Alarm

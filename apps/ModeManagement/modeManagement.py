@@ -642,6 +642,7 @@ class ModeManagement(Hass):
                         if self.get_state(person['person'], namespace = self.HASS_namespace) == 'home':
                             new = 'home'
 
+
         # React to presence trackers
         if new == 'home':
             entity_tenant = False
@@ -682,7 +683,6 @@ class ModeManagement(Hass):
                     if self.timer_running(self.away_handler):
                         try:
                             self.cancel_timer(self.away_handler)
-                            self.log(f"Stopped existing handler to stop setting away state", level = "INFO") ###
                         except Exception as e:
                             self.log(
                                 f"Was not able to stop existing handler to stop setting away state. {e}",

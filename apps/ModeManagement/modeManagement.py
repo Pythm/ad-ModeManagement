@@ -74,7 +74,7 @@ class ModeManagement(Hass):
             RESET_TRANSLATE = translations[language]['reset']
 
         # Set up notification
-        self.notify_reciever = self.args.get('notify_reciever', [])
+        self.notify_receiver = self.args.get('notify_receiver', [])
         name_of_notify_app = self.args.get('notify_app', None)
         if name_of_notify_app is not None:
             self.notify_app = self.get_app(name_of_notify_app)
@@ -190,7 +190,13 @@ class ModeManagement(Hass):
         self.alarm_media = self.args.get('alarm_media', [])
 
         # Start vacuum robots when no adults is home
-        self.vacuum = self.args.get('vacuum',[])
+        self.vacuum = self.args.get('vacuum', [])
+        for i, item in enumerate(self.vacuum):
+            if isinstance(item, str):
+                self.vacuum[i] = {'vacuum': item}
+            elif not isinstance(item, dict):
+                self.log(f"Vacuum list must be defined as a dictionary. vacuum: {item}", level='INFO')
+
         self.prevent_vacuum = self.args.get('prevent_vacuum', [])
         self.enable_stop_vacuum:bool = False
 
@@ -580,7 +586,7 @@ class ModeManagement(Hass):
                         self.notify_app.send_notification(
                             message = f"{person['person']} unlocked door. Turned on wash lights",
                             message_title = "Housekeeper",
-                            message_recipient = self.notify_reciever,
+                            message_recipient = self.notify_receiver,
                             also_if_not_home = True,
                             data = data
                         )
@@ -633,7 +639,6 @@ class ModeManagement(Hass):
                 if 'outside' in person:
                     if person['outside'] == entity:
                         entity = person['person']
-                        self.log(f"{person['person']} is: {self.get_state(person['person'], namespace = self.HASS_namespace)} when turning off outside switch") ###
                         if self.get_state(person['person'], namespace = self.HASS_namespace) == 'home':
                             new = 'home'
 
@@ -695,7 +700,7 @@ class ModeManagement(Hass):
                 self.notify_app.send_notification(
                     message = f"Housekeeper {entity} entered",
                     message_title = "Housekeeping",
-                    message_recipient = self.notify_reciever,
+                    message_recipient = self.notify_receiver,
                     also_if_not_home = True,
                     data = data
                 )
@@ -804,7 +809,7 @@ class ModeManagement(Hass):
             self.notify_app.send_notification(
                 message = f"{entity}",
                 message_title = "Sensor triggered",
-                message_recipient = self.notify_reciever,
+                message_recipient = self.notify_receiver,
                 also_if_not_home = True,
                 data = data
             )
@@ -858,23 +863,37 @@ class ModeManagement(Hass):
     def stop_vacuum(self) -> None:
         if self.enable_stop_vacuum:
             for robot in self.vacuum:
-                if self.get_state(robot) == 'cleaning':
-                    self.call_service('vacuum/return_to_base', entity_id = robot, namespace = self.HASS_namespace)
+                if self.get_state(robot['vacuum']) == 'cleaning':
+                    self.call_service('vacuum/return_to_base', entity_id = robot['vacuum'], namespace = self.HASS_namespace)
             self.enable_stop_vacuum = False
 
     def start_vacuum(self) -> None:
         for robot in self.vacuum:
+            start_robot = False
             if (
-                (self.get_state(robot, namespace = self.HASS_namespace) == 'docked'
-                or self.get_state(robot, namespace = self.HASS_namespace) == 'charging')
-                and self.get_state(robot, attribute='battery_level', namespace = self.HASS_namespace) > 40
+                (self.get_state(robot['vacuum'], namespace = self.HASS_namespace) == 'docked'
+                or self.get_state(robot['vacuum'], namespace = self.HASS_namespace) == 'charging')
             ):
-                self.call_service('vacuum/start', entity_id = robot, namespace = self.HASS_namespace)
-                self.enable_stop_vacuum = True
+                if 'battery' in robot:
+                    if float(self.get_state(robot['battery'], namespace = self.HASS_namespace)) > 40:
+                        start_robot = True
+                else:
+                    try:
+                        battery_level = float(self.get_state(robot['vacuum'], attribute='battery_level', namespace = self.HASS_namespace))
+                    except (ValueError, TypeError):
+                        battery_level = 100
+                    if battery_level > 40:
+                        start_robot = True
+                if start_robot:
+                    self.call_service('vacuum/start', entity_id = robot['vacuum'], namespace = self.HASS_namespace)
+                    self.enable_stop_vacuum = True
 
     def _is_holiday(self, date):
         if self.holidays is not None:
-            return date in self.holidays
+            isNotWorkday:bool = date in self.holidays
+            if not isNotWorkday:
+                isNotWorkday = date.weekday() > 4
+            return isNotWorkday
         return self.get_state(self.workday, namespace = self.HASS_namespace) == 'off'
 
 class Notify_Mobiles:

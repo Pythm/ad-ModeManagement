@@ -10,7 +10,7 @@
 - **Vacation Mode**: Prevents mode changes when a user-defined `input_boolean.vacation` is active.  
 - **Door Lock Integration**: Supports MQTT-based door locks (e.g., Nimly) for auto-locking when no adults are home or during nighttime.  
 - **Vacuum Cleaner Automation**: Triggers vacuum cleaners when no adults are home and stops them if an adult returns.  
-- **Alarm Notifications**: Sends alerts via `notify_reciever` when sensors are triggered (e.g., open windows, motion) and no one is home.  
+- **Alarm Notifications**: Sends alerts via `notify_receiver` when sensors are triggered (e.g., open windows, motion) and no one is home.  
 - **Customizable Schedules**: All times and thresholds are configurable for flexibility.  
 
 ---
@@ -33,7 +33,7 @@
      class: ModeManagement
      country_code: 'NO'
      vacation: input_boolean.vacation
-     notify_reciever:
+     notify_receiver:
        - mobile_app_my_phone
    ```  
 
@@ -55,7 +55,7 @@
 |----------------------|------------|----------------|-----------------------------------------------------------------------------|
 | `vacation`           | input_boolean | `input_boolean.vacation` | Input boolean to prevent mode changes during vacation.                      |
 | `HALightModeText`    | input_text | `input_text.lightmode` | Input text to display current light mode.                                   |
-| `notify_reciever`    | list       | (optional)     | List of devices to send notifications to (e.g., `mobile_app_your_phone`).   |
+| `notify_receiver`    | list       | (optional)     | List of devices to send notifications to (e.g., `mobile_app_your_phone`).   |
 | `MQTT_namespace`     | string     | `"mqtt"`       | MQTT namespace (optional).                             |
 | `HASS_namespace`     | string     | `"default"`    | Home Assistant namespace (optional).                                        |
 | `morning_start_listen_time` | string | `"06:00:00"` | Time to start listening for morning sensors.                                |
@@ -103,7 +103,7 @@ manageModes:
   country_code: 'NO'
   vacation: input_boolean.vacation
   HALightModeText: input_text.lightmode
-  notify_reciever:
+  notify_receiver:
     - mobile_app_my_phone
   morning_sensors:
     - binary_sensor.motion_detection
@@ -154,7 +154,7 @@ manageModes:
 ---
 
 ## 📢 Notifications  
-- Configure `notify_reciever` with a list of devices (e.g., `mobile_app_your_phone`).  
+- Configure `notify_receiver` with a list of devices (e.g., `mobile_app_your_phone`).  
 - Use a custom notification app with the `send_notification` method.  
 
 ---

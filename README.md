@@ -17,8 +17,10 @@
 
 ## 🚨 Breaking Changes  
 ### **1.2.0**  
-- **MQTT Namespace Update**: Default MQTT namespace changed to `'mqtt'` to align with AppDaemon defaults. 
+- **MQTT Namespace Update**: Default MQTT namespace changed to `'mqtt'` to align with AppDaemon defaults.
 
+### **1.2.4**  
+- **Spelling Correction**: Changed `notify_reciever` → `notify_receiver`.  
 ---
 
 ## 🛠️ Installation  
@@ -125,8 +127,9 @@ manageModes:
       role: adult
       lock_user: 0
   vacuum:
-    - vacuum.roomba
-    - vacuum.roborock
+    - vacuum: vacuum.roomba
+    - vacuum: vacuum.roborock_s8
+      battery: sensor.roborock_s8_batteri
   prevent_vacuum:
     - media_player.tv
   alarmsensors:

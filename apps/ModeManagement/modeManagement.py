@@ -681,7 +681,6 @@ class ModeManagement(Hass):
                     if self.timer_running(self.away_handler):
                         try:
                             self.cancel_timer(self.away_handler)
-                            self.log(f"Stopped existing handler to stop setting away state", level = "INFO") ###
                         except Exception as e:
                             self.log(
                                 f"Was not able to stop existing handler to stop setting away state. {e}",

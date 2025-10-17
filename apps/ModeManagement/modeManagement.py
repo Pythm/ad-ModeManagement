@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.13"
+__version__ = "0.1.14"
 
 from appdaemon.plugins.hass.hassapi import Hass
 import datetime

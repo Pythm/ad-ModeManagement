@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.1.13"
+__version__ = "0.1.14"
 
 from appdaemon.plugins.hass.hassapi import Hass
 import datetime
@@ -154,7 +154,7 @@ class ModeManagement(Hass):
         self.tenantAtHome:int = 0
         self.housekeeperAtHome:int = 0
 
-        self.presence = self.args['presence']
+        self.presence = self.args.get('presence', [])
         for person in self.presence:
             if not 'role' in person:
                 person.update(
@@ -340,7 +340,7 @@ class ModeManagement(Hass):
             return False
         return True
 
-    def mode_event(self, event_name, data, kwargs) -> None:
+    def mode_event(self, event_name, data, **kwargs) -> None:
         """ Listens to mode events and reacts on night, morning, normal.
             Also updates the input_text with mode.
         """
@@ -557,7 +557,7 @@ class ModeManagement(Hass):
             )
 
         # Doorlock listen
-    def MQTT_doorlock_event(self, event_name, data, kwargs) -> None:
+    def MQTT_doorlock_event(self, event_name, data, **kwargs) -> None:
         """ Listens to MQTT door events.
         """
         try:

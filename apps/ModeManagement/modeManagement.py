@@ -690,7 +690,7 @@ class ModeManagement(Hass):
                             )
                     self.away_handler = None
                 
-                if self.adultAtHome >= 1:
+                if self.adultAtHome + self.extendedFamilyAtHome >= 1 and current_MODE not in (AWAY_TRANSLATE, NIGHT_TRANSLATE):
                     self.disableRelockDoor()
 
             elif self.housekeeperAtHome >= 1:

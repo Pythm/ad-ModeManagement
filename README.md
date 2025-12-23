@@ -26,6 +26,20 @@
 
 ---
 
+## 📦 Dependencies
+
+Install the required packages using `requirements.txt` 
+
+- If you run Appdaemon as a Addon in HA you'll have to specify the python packages manually in configuration in the Addon and restart Appdaemon.
+
+- If your Appdaemon install method does not handle requirements automatically:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
 ## 🛠️ Installation
 1. **Clone the repository** into your AppDaemon `apps` directory:  
    ```bash

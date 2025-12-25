@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from appdaemon.plugins.hass.hassapi import Hass
 import datetime
@@ -56,22 +56,11 @@ class ModeManagement(Hass):
         self.holidays = None
         if 'country_code' in self.args:
             self.country_code = self.args['country_code']
-        elif 'latitude' in self.config and 'longitude' in self.config:
-            try:
-                geolocator = Nominatim(user_agent="ElectricalPriceCalc")
-                location = geolocator.reverse((self.config['latitude'], self.config['longitude']), language='en')
-                self.country_code = location.raw['address'].get('country_code', 'NO')
-                self.log(f"Country code set to {self.country_code.upper()} in {self.name}", level = 'INFO')
-            except Exception as e:
-                self.log(f"Failed to get country code from geolocation: {e}", level='ERROR')
-
-        if self.country_code is not None:
             try:
                 holiday_class = getattr(holidays, self.country_code.upper())
                 self.holidays = holiday_class(years=[datetime.date.today().year, datetime.date.today().year + 1])
             except AttributeError:
-                self.log(f"Could not find holidays for {self.country_code}, defaulting to Norway.", level = 'INFO')
-                self.holidays = holidays.Norway(years=[datetime.date.today().year, datetime.date.today().year + 1])
+                self.log(f"Could not find holidays for {self.country_code}. Will fire morning every day.", level = 'INFO')
 
         # Presence detection and HA switch for manual override
         self.adultAtHome:int = 0

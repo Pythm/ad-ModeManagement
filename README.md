@@ -6,7 +6,7 @@
 
 ## 🔍 Features
 - **Morning/Night Mode Triggers**: Uses presence, time, and sensor triggers to automatically switch between `normal`, `morning`, and `night` modes.
-- **Vacation Mode**: Prevents mode changes when a user-defined `input_boolean.vacation` is active.
+- **Vacation Mode**: Prevents day to day mode changes when a user-defined `input_boolean.vacation` is active.
 - **Door Lock Integration**: Supports MQTT-based door locks (e.g., Nimly) for auto-locking when no adults are home or during nighttime.
 - **Vacuum Cleaner Automation**: Triggers vacuum cleaners when no adults are home and stops them if an adult returns.
 - **Alarm Notifications**: Sends alerts via `notify_receiver` when sensors are triggered (e.g., open windows, motion) and no one is home.
@@ -15,6 +15,9 @@
 ---
 
 ## 🚨 Breaking Changes
+### **0.2.1**
+- **Morning routine**: Defining `country_code` is now optional and app will not try to find location based on Appdaemon config. Lack of doing so will fire **morning** mode every day.
+
 ### **0.2.0**
 - **Lightwand translations**: App now uses Lightwand translations singleton. This requires at least one app with Lightwand version 2.0.0 or later running on your system. Check out https://github.com/Pythm/ad-Lightwand?tab=readme-ov-file#-translating-or-changing-modes on how to use your own mode names.
 
@@ -62,10 +65,9 @@ pip install -r requirements.txt
 ---
 
 ## 📌 Tips & Best Practices  
-- **Vacation Mode**: Prevent mode changes from app when `input_boolean.vacation` is active.
-- **Holiday Detection**: Uses `country_code` to fetch holidays. If not defined, it attempts to find latitude/longitude from AppDaemon configuration.
-- Light‑Mode Display – Use a Home Assistant helper input_text configured with (`HALightModeText`) to show the current Light mode.
-- Schedule Alignment – Configure `morning_start_listen_time` and `night_start_listen_time` to match your household’s routine.
+- **Vacation Mode**: Prevents day to day mode changes from app when `input_boolean.vacation` is active.
+- **Holiday Detection**: Define `country_code` to fetch holidays. This will set normal automation instead of morning mode during hollidays and weekends. If not defined, app will call morning mode every day.
+- **Light‑Mode Display** – Use a Home Assistant input_text helper configured with (`HALightModeText`) to show the current Light mode.
 
 ---
 
@@ -94,7 +96,7 @@ Configure the doorlocks you want to automate with:
 
 ### 📢 Notifications  
 - Configure `notify_receiver` with a list of devices (e.g., `mobile_app_your_phone`).  
-- Use a custom notification app instead with `notify_app` that contains the `send_notification` function. 
+- You can use a custom notification app instead with `notify_app` that contains the `send_notification` function. 
 
 ---
 
@@ -102,7 +104,7 @@ Configure the doorlocks you want to automate with:
 ### **App-Level Configuration**  
 | Key                  | Type       | Default        | Description                                                                 |
 |----------------------|------------|----------------|-----------------------------------------------------------------------------|
-| `country_code`       | country_code | `NO`         | Country code for your location to find hollidays                            |
+| `country_code`       | country_code | (optional)   | Country code for your location to find hollidays                            |
 | `vacation`           | input_boolean | `input_boolean.vacation` | Input boolean to prevent mode changes during vacation.         |
 | `HALightModeText`    | input_text | (optional)     | Input text to display current light mode.                                   |
 | `notify_receiver`    | list       | (optional)     | List of devices to send notifications to (e.g., `mobile_app_your_phone`).   |

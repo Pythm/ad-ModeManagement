@@ -69,6 +69,9 @@ pip install -r requirements.txt
 - **Holiday Detection**: Define `country_code` to fetch holidays. This will set normal automation instead of morning mode during hollidays and weekends. If not defined, app will call morning mode every day.
 - **Light‑Mode Display** – Use a Home Assistant input_text helper configured with (`HALightModeText`) to show the current Light mode.
 
+> [!NOTE]  
+> If a light in Lightwand does not contain morning mode, the normal automation is automagically controlling your light.
+
 ---
 
 ## 📚 Configurations

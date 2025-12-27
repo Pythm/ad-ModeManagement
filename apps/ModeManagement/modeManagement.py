@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 from appdaemon.plugins.hass.hassapi import Hass
 import datetime
@@ -794,18 +794,41 @@ class ModeManagement(Hass):
                 (self.get_state(robot['vacuum'], namespace = self.HASS_namespace) == 'docked'
                 or self.get_state(robot['vacuum'], namespace = self.HASS_namespace) == 'charging')
             ):
+                battery_level = 101
                 if 'battery' in robot:
-                    if float(self.get_state(robot['battery'], namespace = self.HASS_namespace)) > 40:
-                        start_robot = True
-                else:
+                    try:
+                        battery_level = float(self.get_state(robot['battery'], namespace = self.HASS_namespace))
+                    except (ValueError, TypeError):
+                        battery_level = 101
+                if battery_level == 101:
                     try:
                         battery_level = float(self.get_state(robot['vacuum'], attribute='battery_level', namespace = self.HASS_namespace))
                     except (ValueError, TypeError):
+                        self.log(
+                            f"Not able to get battery_level from {robot['vacuum']}. Try defining 'battery: sensor.vacuum_battery' for your robot",
+                            level = 'INFO'
+                        )
                         battery_level = 100
-                    if battery_level > 40:
-                        start_robot = True
-                if start_robot:
-                    self.call_service('vacuum/start', entity_id = robot['vacuum'], namespace = self.HASS_namespace)
+                if battery_level > 40:
+                    if 'daily_routine' in vacuum:
+                        if vacuum['daily_routine'].startswith('button'):
+                            self.call_service('button/press',
+                                entity_id = vacuum['daily_routine'],
+                                namespace = self.HASS_namespace)
+                        else:
+                            try:
+                                self.call_service('switch/turn_on',
+                                    entity_id = vacuum['daily_routine'],
+                                    namespace = self.HASS_namespace)
+                            except Exception as e:
+                                self.log(
+                                    f"Not able to start {vacuum['daily_routine']}. Not a button or a switch. Please make a feasture request with information and error log: {e}",
+                                    level = 'INFO'
+                                )
+                    else:
+                        self.call_service('vacuum/start',
+                            entity_id = robot['vacuum'],
+                            namespace = self.HASS_namespace)
                     self.enable_stop_vacuum = True
 
     def _is_holiday(self, date):

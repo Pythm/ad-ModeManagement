@@ -810,19 +810,19 @@ class ModeManagement(Hass):
                         )
                         battery_level = 100
                 if battery_level > 40:
-                    if 'daily_routine' in vacuum:
-                        if vacuum['daily_routine'].startswith('button'):
+                    if 'daily_routine' in robot:
+                        if robot['daily_routine'].startswith('button'):
                             self.call_service('button/press',
-                                entity_id = vacuum['daily_routine'],
+                                entity_id = robot['daily_routine'],
                                 namespace = self.HASS_namespace)
                         else:
                             try:
                                 self.call_service('switch/turn_on',
-                                    entity_id = vacuum['daily_routine'],
+                                    entity_id = robot['daily_routine'],
                                     namespace = self.HASS_namespace)
                             except Exception as e:
                                 self.log(
-                                    f"Not able to start {vacuum['daily_routine']}. Not a button or a switch. Please make a feasture request with information and error log: {e}",
+                                    f"Not able to start {robot['daily_routine']}. Not a button or a switch. Please make a feasture request with information and error log: {e}",
                                     level = 'INFO'
                                 )
                     else:

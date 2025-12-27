@@ -87,13 +87,40 @@ pip install -r requirements.txt
 
 ### MQTT Door locks
 
-The MQTT door lock was tested with Nimly locks. Only use it in areas where leaving the door unlocked when home is safe.
 
-Configure the doorlocks you want to automate with:
+> ⚠️ **Safety note** – Mqtt door lock will be rewritten to better support id, and only unlock if enabled as a option.
+
+---
+
+## Vacuum Cleaners
+
+You can automatically start and stop a vacuum cleaner when a person with the *adult* role leaves or returns home.
+
+### What it can do
+
+| Feature | Description |
+|---------|-------------|
+| **Battery monitoring** | If the vacuum entity doesn’t expose a battery level, you can point to a separate battery sensor. |
+| **Custom start routine** | Configure `daily_routine` with an entity that triggers the vacuum (e.g., a button or switch). |
+
+### Example configuration
+
 ```yaml
-  MQTT_door_lock:
-    - zigbee2mqtt/NimlyDoor
+vacuum:
+  - vacuum: vacuum.roborock_s8
+    battery: sensor.roborock_s8_battery   # optional – only if the vacuum entity lacks a battery attribute
+    daily_routine: button.daily_clean     # the entity that starts the cleaning job
+
+prevent_vacuum:
+  - media_player.tv     # the vacuum will not start if this entity reports "on"
 ```
+
+#### How `prevent_vacuum` works
+
+- The list under `prevent_vacuum` contains entities that act as *gatekeepers*.  
+- If any of those entities reports a state of **`on`**, the automation will **skip** starting the vacuum.  
+
+> **TIP** – Use any entity that can report `on`/`off` (switches, media players, sensors, etc.) to control the start condition.
 
 ---
 

@@ -7,7 +7,6 @@ __version__ = "0.2.4"
 from appdaemon.plugins.hass.hassapi import Hass
 import datetime
 import json
-from geopy.geocoders import Nominatim
 import holidays
 from typing import Tuple, Optional
 

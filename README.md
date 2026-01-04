@@ -138,12 +138,12 @@ prevent_vacuum:
 | `vacation`           | input_boolean | `input_boolean.vacation` | Input boolean to prevent mode changes during vacation.         |
 | `HALightModeText`    | input_text | (optional)     | Input text to display current light mode.                                   |
 | `notify_receiver`    | list       | (optional)     | List of devices to send notifications to (e.g., `mobile_app_your_phone`).   |
-| `MQTT_namespace`     | string     | `"mqtt"`       | MQTT namespace (optional).                                                  |
-| `HASS_namespace`     | string     | `"default"`    | Home Assistant namespace (optional).                                        |
-| `morning_start_listen_time` | string | `"06:00:00"` | Time to start listening for morning sensors.                               |
-| `execute_morning_at` | string     | `"10:00:00"`   | Time to execute morning mode.                                               |
-| `morning_to_normal`  | string     | `"09:00:00"`   | Time to switch to normal mode after morning.                                |
-| `night_start_listen_time` | string | `"22:00:00"` | Time to start listening for night sensors.                                   |
+| `MQTT_namespace`     | string     | `"mqtt"`       | MQTT namespace.                                                             |
+| `HASS_namespace`     | string     | `"default"`    | Home Assistant namespace.                                                   |
+| `morning_start_listen_time` | string | `"06:00:00"` | Time to start listening for morning sensors to change form night to morning.|
+| `execute_morning_at` | string     | `"10:00:00"`   | Time to execute morning mode if sensors has not been triggered.             |
+| `morning_to_normal`  | string     | `"09:00:00"`   | Time to change mode from morning to normal.                                 |
+| `night_start_listen_time` | string | `"22:00:00"` | Time to start listening for night sensors to activate night mode.            |
 | `execute_night_at`   | string     | `"02:00:00"`   | Time to execute night mode.                                                 |
 | `delay_before_setting_away` | int | `0` | Optional delay in seconds before setting away mode when no one is home.                |
 | `keep_mode_when_outside` | input_boolean | `input_boolean.keep_mode` | Prevents mode changes when away.                          |

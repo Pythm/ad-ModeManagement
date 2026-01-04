@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 
 from appdaemon.plugins.hass.hassapi import Hass
 import datetime
@@ -175,7 +175,7 @@ class ModeManagement(Hass):
 
         if (
             self.now_is_between(self.morning_runtime, self.execute_morning)
-            and self.current_MODE == translations.night
+            and self.current_MODE.startswith(translations.night)
         ):
             self.run_in(self._waiting_for_morning, 1)
 
@@ -272,7 +272,7 @@ class ModeManagement(Hass):
         ):
             return
         if (
-            self.current_MODE == translations.night
+            self.current_MODE.startswith(translations.night)
             and self.now_is_between(self.morning_runtime, self.execute_morning)
             and (modename == translations.normal
             or modename == translations.morning)
@@ -415,7 +415,7 @@ class ModeManagement(Hass):
         """ Change to normal day light at this time if mode is night or morning.
         """
         if (
-            self.current_MODE == translations.night
+            self.current_MODE.startswith(translations.night)
             or self.current_MODE == translations.morning
         ):
             self.fire_event(translations.MODE_CHANGE, mode = translations.normal, namespace = self.HASS_namespace)
@@ -657,7 +657,7 @@ class ModeManagement(Hass):
                     return
                 
                 if (
-                    str(self.current_MODE)[:5] == translations.night
+                    self.current_MODE.startswith(translations.night)
                     and self.now_is_between(self.night_runtime, self.morning_runtime)
                 ):
                    return

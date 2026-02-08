@@ -327,13 +327,7 @@ class ModeManagement(Hass):
 
         # Update input_text do display in GUI
         if self.haLightModeText:
-            if roomname is not None:
-                self.call_service('input_text/set_value',
-                    value = f"{modename} in {roomname}",
-                    entity_id = self.haLightModeText,
-                    namespace = self.HASS_namespace
-                )
-            else:
+            if roomname is None:
                 self.call_service('input_text/set_value',
                     value = self.current_MODE,
                     entity_id = self.haLightModeText,

@@ -105,14 +105,18 @@ You can automatically start and stop a vacuum cleaner when a person with the *ad
 
 ### Example configuration
 
+
 ```yaml
 vacuum:
   - vacuum: vacuum.roborock_s8
     battery: sensor.roborock_s8_battery   # optional – only if the vacuum entity lacks a battery attribute
     daily_routine: button.daily_clean     # the entity that starts the cleaning job
+    prevent_vacuum:                       # <-- only this vacuum has a custom prevent list
+      - switch.vacuum3_pause
 
+# optional: global prevent_vacuum list
 prevent_vacuum:
-  - media_player.tv     # the vacuum will not start if this entity reports "on"
+  - media_player.tv
 ```
 
 #### How `prevent_vacuum` works

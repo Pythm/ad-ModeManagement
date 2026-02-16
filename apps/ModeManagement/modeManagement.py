@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.2.4"
+__version__ = "0.3.0"
 
 from appdaemon.plugins.hass.hassapi import Hass
 import datetime
@@ -497,6 +497,7 @@ class ModeManagement(Hass):
                 payload = "UNLOCK",
                 namespace = self.MQTT_namespace
             )
+        self.lastUnlockUser = 0
 
         # Doorlock listen
     def MQTT_doorlock_event(self, event_name, data, **kwargs) -> None:
@@ -523,16 +524,17 @@ class ModeManagement(Hass):
                     ):
                         self.current_MODE = translations.wash
                         self.fire_event(translations.MODE_CHANGE, mode = translations.wash, namespace = self.HASS_namespace)
-                        data = {
-                            'tag' : 'housekeeper_at_door'
-                            }
-                        self.notify_app.send_notification(
-                            message = f"{person.person_id} unlocked door. Turned on wash lights",
-                            message_title = "Housekeeper",
-                            message_recipient = self.notify_receiver,
-                            also_if_not_home = True,
-                            data = data
-                        )
+                    data = {
+                        'tag' : 'last_unlock_user'
+                        }
+                    self.notify_app.send_notification(
+                        message = f"{person.person_id} unlocked the door",
+                        message_title = "Door unlock",
+                        message_recipient = self.notify_receiver,
+                        also_if_not_home = True,
+                        data = data
+                    )
+                    break
                     
             if not self.anyone_at_main_house_home():
                 self.nofify_on_alarm = False
@@ -555,11 +557,12 @@ class ModeManagement(Hass):
             if person.outside_switch == entity:
                 if new == 'on':
                     person.update_is_outside(is_outside=True)
-                    self._away(person=person)
+                    if person.home:
+                        self._away(person=person)
 
                 elif new == 'off':
                     person.update_is_outside(is_outside=False)
-                    if self.get_state(person.person_id, namespace = self.HASS_namespace) == 'home':
+                    if person.home:
                         self._home(person=person)
 
     def _presenceChange(self, entity, attribute, old, new, kwargs) -> None:
@@ -569,14 +572,17 @@ class ModeManagement(Hass):
         for person in self.presence:
             if person.person_id == entity:
                 if new == 'home':
-                    if person.outside_activated:
-                        self.ADapi.log(f"{person.person_id} set outside when returning home") ###
-                        return
                     person.update_state(is_home=True)
+                    if person.outside_activated:
+                        self.ADapi.log(f"{person.person_id} outside activated when returning home. Is home: {person.is_home()}") ###
+                        return
                     self._home(person=person)
 
                 elif old == 'home':
                     person.update_state(is_home=False)
+                    if person.outside_activated:
+                        self.ADapi.log(f"{person.person_id} already outside activated when going away. Is home: {person.is_home()}") ###
+                        return
                     self._away(person=person)
 
     def _home(self, person:Person) -> None:
@@ -617,7 +623,7 @@ class ModeManagement(Hass):
 
         elif person.role == 'housekeeper':
             data = {
-                'tag' : 'housekeeper_at_door'
+                'tag' : 'last_unlock_user'
                 }
             self.notify_app.send_notification(
                 message = f"Housekeeper {person.person_id} entered",

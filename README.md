@@ -31,7 +31,8 @@
 
 ## 📦 Dependencies
 
-Install the required packages using `requirements.txt` 
+Install the required packages using `requirements.txt`:
+  - holidays
 
 - If you run Appdaemon as a Addon in HA you'll have to specify the python packages manually in configuration in the Addon and restart Appdaemon.
 
@@ -70,7 +71,7 @@ pip install -r requirements.txt
 - **Light‑Mode Display** – Use a Home Assistant input_text helper configured with (`HALightModeText`) to show the current Light mode.
 
 > [!NOTE]  
-> If a light in Lightwand does not contain morning mode, the normal automation is automagically controlling your light.
+> If a light in Lightwand does not contain morning mode, the automagical automation is automagically controlling your light.
 
 ---
 
@@ -83,12 +84,11 @@ pip install -r requirements.txt
 | **kid** | Keeps doors locked and starts vacuum if only kids are home. | |
 | **family** | Extended family; behaves like an adult except does not start vacuum when leaving. | |
 | **housekeeper** | Switches Light mode to `wash` and notifies you when the housekeeper arrives while no one else is home. | |
-| **tenant** | Not used at the moment; please make a request if you need behaviour for tenants. | |
 
 ### MQTT Door locks
 
 
-> ⚠️ **Safety note** – Mqtt door lock will be rewritten to better support id, and only unlock if enabled as a option.
+> ⚠️ **Safety note** – Mqtt door lock will be rewritten to better support id, and only unlock if enabled as a option. 
 
 ---
 
@@ -167,7 +167,7 @@ prevent_vacuum:
 | `presence`           | list       | (optional)     | List of persons with roles (`adult`, `kid`, `housekeeper`)                  |
 | `person`             | person/tracker | (optional) | Person or tracker to track.                                                 |
 | `role`               | string     | `adult`        | Person role (`adult`, `kid`, `family`, `housekeeper`)                       |
-| `outside`            | input_boolean |  (optional) | Manually set person away.                                                   |
+| `outside_switch`     | input_boolean |  (optional) | Manually set person away.                                                   |
 | `lock_user`          | int        | (optional)     | Lock user ID for MQTT door lock.                                            |
 
 ### **Vacuum Cleaners**  
@@ -234,7 +234,6 @@ manageModes:
 
   # Vacuum setup
   vacuum:
-    - vacuum: vacuum.roomba
     - vacuum: vacuum.roborock_s8
       battery: sensor.roborock_s8_batteri
   prevent_vacuum:

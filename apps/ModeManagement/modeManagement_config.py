@@ -1,8 +1,7 @@
 from __future__ import annotations
-
 from typing import Optional, List, Dict, Literal, Union
-
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, model_validator
+from enum import Enum
 
 Role = Literal['adult', 'kid', 'tenant', 'housekeeper', 'family']
 
@@ -28,11 +27,10 @@ class Person(BaseModel):
 
     person_id: str = Field(alias="person")
     role: Role = 'adult'
-    outside_switch: Optional[str] = Field(
-        None,
-        alias="outside_switch",          # the official name
-        alias_priority=("outside", "outside_switch")  # accept both
-    )
+
+    outside_switch: Optional[str] = Field(None, alias="outside_switch")
+    outside_input: Optional[str] = Field(None, alias="outside")
+
     outside_activated: bool = False
     lock_user: Optional[Union[str, int]] = None
     #state: Optional[str] = None
@@ -41,9 +39,17 @@ class Person(BaseModel):
 
     stopMorning: bool = False
 
+    @model_validator(mode='after')
+    def set_outside(self) -> 'Person':
+        # Manually move the value from the input field to the main field
+        if self.outside_input is not None:
+            self.outside_switch = self.outside_input
+        return self
+
     class Config:
         allow_population_by_field_name = True
         use_enum_values = True
+        extra = 'ignore'
         frozen = False
 
     # ---------------------------------------------------------------------

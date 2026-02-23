@@ -31,7 +31,8 @@
 
 ## 📦 Dependencies
 
-Install the required packages using `requirements.txt` 
+Install the required packages using `requirements.txt`:
+  - holidays
 
 - If you run Appdaemon as a Addon in HA you'll have to specify the python packages manually in configuration in the Addon and restart Appdaemon.
 
@@ -70,7 +71,7 @@ pip install -r requirements.txt
 - **Light‑Mode Display** – Use a Home Assistant input_text helper configured with (`HALightModeText`) to show the current Light mode.
 
 > [!NOTE]  
-> If a light in Lightwand does not contain morning mode, the normal automation is automagically controlling your light.
+> If a light in Lightwand does not contain morning mode, the automagical automation is automagically controlling your light.
 
 ---
 
@@ -83,12 +84,11 @@ pip install -r requirements.txt
 | **kid** | Keeps doors locked and starts vacuum if only kids are home. | |
 | **family** | Extended family; behaves like an adult except does not start vacuum when leaving. | |
 | **housekeeper** | Switches Light mode to `wash` and notifies you when the housekeeper arrives while no one else is home. | |
-| **tenant** | Not used at the moment; please make a request if you need behaviour for tenants. | |
 
 ### MQTT Door locks
 
 
-> ⚠️ **Safety note** – Mqtt door lock will be rewritten to better support id, and only unlock if enabled as a option.
+> ⚠️ **Safety note** – Mqtt door lock will be rewritten to better support id, and only unlock if enabled as a option. 
 
 ---
 
@@ -105,14 +105,18 @@ You can automatically start and stop a vacuum cleaner when a person with the *ad
 
 ### Example configuration
 
+
 ```yaml
 vacuum:
   - vacuum: vacuum.roborock_s8
     battery: sensor.roborock_s8_battery   # optional – only if the vacuum entity lacks a battery attribute
     daily_routine: button.daily_clean     # the entity that starts the cleaning job
+    prevent_vacuum:                       # <-- only this vacuum has a custom prevent list
+      - switch.vacuum3_pause
 
+# optional: global prevent_vacuum list
 prevent_vacuum:
-  - media_player.tv     # the vacuum will not start if this entity reports "on"
+  - media_player.tv
 ```
 
 #### How `prevent_vacuum` works
@@ -138,12 +142,12 @@ prevent_vacuum:
 | `vacation`           | input_boolean | `input_boolean.vacation` | Input boolean to prevent mode changes during vacation.         |
 | `HALightModeText`    | input_text | (optional)     | Input text to display current light mode.                                   |
 | `notify_receiver`    | list       | (optional)     | List of devices to send notifications to (e.g., `mobile_app_your_phone`).   |
-| `MQTT_namespace`     | string     | `"mqtt"`       | MQTT namespace (optional).                                                  |
-| `HASS_namespace`     | string     | `"default"`    | Home Assistant namespace (optional).                                        |
-| `morning_start_listen_time` | string | `"06:00:00"` | Time to start listening for morning sensors.                               |
-| `execute_morning_at` | string     | `"10:00:00"`   | Time to execute morning mode.                                               |
-| `morning_to_normal`  | string     | `"09:00:00"`   | Time to switch to normal mode after morning.                                |
-| `night_start_listen_time` | string | `"22:00:00"` | Time to start listening for night sensors.                                   |
+| `MQTT_namespace`     | string     | `"mqtt"`       | MQTT namespace.                                                             |
+| `HASS_namespace`     | string     | `"default"`    | Home Assistant namespace.                                                   |
+| `morning_start_listen_time` | string | `"06:00:00"` | Time to start listening for morning sensors to change form night to morning.|
+| `execute_morning_at` | string     | `"10:00:00"`   | Time to execute morning mode if sensors has not been triggered.             |
+| `morning_to_normal`  | string     | `"09:00:00"`   | Time to change mode from morning to normal.                                 |
+| `night_start_listen_time` | string | `"22:00:00"` | Time to start listening for night sensors to activate night mode.            |
 | `execute_night_at`   | string     | `"02:00:00"`   | Time to execute night mode.                                                 |
 | `delay_before_setting_away` | int | `0` | Optional delay in seconds before setting away mode when no one is home.                |
 | `keep_mode_when_outside` | input_boolean | `input_boolean.keep_mode` | Prevents mode changes when away.                          |
@@ -163,7 +167,7 @@ prevent_vacuum:
 | `presence`           | list       | (optional)     | List of persons with roles (`adult`, `kid`, `housekeeper`)                  |
 | `person`             | person/tracker | (optional) | Person or tracker to track.                                                 |
 | `role`               | string     | `adult`        | Person role (`adult`, `kid`, `family`, `housekeeper`)                       |
-| `outside`            | input_boolean |  (optional) | Manually set person away.                                                   |
+| `outside_switch`     | input_boolean |  (optional) | Manually set person away.                                                   |
 | `lock_user`          | int        | (optional)     | Lock user ID for MQTT door lock.                                            |
 
 ### **Vacuum Cleaners**  
@@ -230,7 +234,6 @@ manageModes:
 
   # Vacuum setup
   vacuum:
-    - vacuum: vacuum.roomba
     - vacuum: vacuum.roborock_s8
       battery: sensor.roborock_s8_batteri
   prevent_vacuum:

@@ -2,17 +2,18 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.2.3"
+__version__ = "0.3.0"
 
 from appdaemon.plugins.hass.hassapi import Hass
 import datetime
 import json
-from geopy.geocoders import Nominatim
 import holidays
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, Dict, Any
 
 from translations_lightmodes import translations
 from lightwand_utils import _parse_mode_and_room
+
+from modeManagement_config import Person, Vacuum
 
 class ModeManagement(Hass):
 
@@ -69,29 +70,33 @@ class ModeManagement(Hass):
         self.tenantAtHome:int = 0
         self.housekeeperAtHome:int = 0
 
-        self.presence = self.args.get('presence', [])
-        for person in self.presence:
-            if not 'role' in person:
-                person.update(
-                    {'role' : 'adult'}
-                )
-            self.listen_state(self._presenceChange, person['person'], namespace = self.HASS_namespace)
-            person.update(
-                {'state' : self.get_state(person['person']), 'last_lock' : False}
-            )
-            if 'outside' in person:
-                self.listen_state(self._presenceChange, person['outside'], namespace = self.HASS_namespace)
+        # Load the presence list – convert every entry into a Person object
+        self.presence: List[Person] = []
+        for entry in self.args.get('presence', []):
+            # `entry` can be a plain dict or already a Person.
+            if isinstance(entry, Person):
+                person_obj = entry
+            else:
+                person_obj = Person(**entry)  # type: ignore[arg-type]
+            self.presence.append(person_obj)
 
-            if person['state'] == 'home':
-                if person['role'] == 'adult':
+        for person in self.presence:
+
+            self.listen_state(self._presenceChange, person.person_id, namespace = self.HASS_namespace)
+
+            if person.outside_switch is not None:
+                self.listen_state(self._outsideChange, person.outside_switch, namespace = self.HASS_namespace)
+
+            if person.is_home():
+                if person.role == 'adult':
                     self.adultAtHome += 1
-                if person['role'] == 'kid':
+                if person.role == 'kid':
                     self.kidsAtHome += 1
-                if person['role'] == 'family':
+                if person.role == 'family':
                     self.extendedFamilyAtHome += 1
-                if person['role'] == 'tenant':
+                if person.role == 'tenant':
                     self.tenantAtHome += 1
-                if person['role'] == 'housekeeper':
+                if person.role == 'housekeeper':
                     self.housekeeperAtHome += 1
 
         self.keep_mode_when_outside = self.args.get('keep_mode_when_outside', None)
@@ -104,15 +109,35 @@ class ModeManagement(Hass):
         self.alarm_active:bool = False
         self.alarm_media = self.args.get('alarm_media', [])
 
-        # Start vacuum robots when no adults is home
-        self.vacuum = self.args.get('vacuum', [])
-        for i, item in enumerate(self.vacuum):
-            if isinstance(item, str):
-                self.vacuum[i] = {'vacuum': item}
-            elif not isinstance(item, dict):
-                self.log(f"Vacuum list must be defined as a dictionary. vacuum: {item}", level='INFO')
+        # Set up vacuum robots
+        raw_vacuum_cfg: List[Union[str, dict]] = self.args.get('vacuum', [])
 
-        self.prevent_vacuum = self.args.get('prevent_vacuum', [])
+        self.vacuum: List[Vacuum] = []
+        global_prevent = self.args.get('prevent_vacuum', [])
+        for i, item in enumerate(raw_vacuum_cfg):
+            if isinstance(item, str):
+                vacuum_dict = {"vacuum": item}
+            elif isinstance(item, dict):
+                vacuum_dict = item
+            else:
+                self.log(f"Vacuum list must be defined as a string or a dictionary. vacuum: {item}",
+                        level='INFO')
+                continue
+
+            # Apply the global prevent_vacuum list if the entry has no own list.
+            if 'prevent_vacuum' not in vacuum_dict:
+                vacuum_dict['prevent_vacuum'] = global_prevent
+
+            # Create the Pydantic object (validates the schema).
+            try:
+                vacuum_obj = Vacuum(**vacuum_dict)
+            except Exception as exc:
+                self.log(f"Could not create Vacuum instance from {vacuum_dict}. Exception: {exc}",
+                        level='ERROR')
+                continue
+
+            self.vacuum.append(vacuum_obj)
+
         self.enable_stop_vacuum:bool = False
 
         # MQTT Door lock
@@ -123,6 +148,7 @@ class ModeManagement(Hass):
         ):
             self.mqtt = self.get_plugin_api("MQTT")
         self.lastUnlockTime = datetime.datetime.now()
+        self.lastUnlockUser = None
 
         for door in self.MQTT_door_lock:
             self.mqtt.mqtt_subscribe(door)
@@ -141,7 +167,7 @@ class ModeManagement(Hass):
             elif self.now_is_between('02:00:00', '05:00:00'):
                 self.current_MODE = translations.night
             else:
-                self.current_MODE = translations.normal
+                self.current_MODE = translations.automagical
         else:
             self.current_MODE = translations.away
             self.start_alarm()
@@ -175,7 +201,7 @@ class ModeManagement(Hass):
 
         if (
             self.now_is_between(self.morning_runtime, self.execute_morning)
-            and self.current_MODE == translations.night
+            and self.current_MODE.startswith(translations.night)
         ):
             self.run_in(self._waiting_for_morning, 1)
 
@@ -261,9 +287,8 @@ class ModeManagement(Hass):
             Also updates the input_text with mode.
         """
         modename, roomname = _parse_mode_and_room(data['mode'])
-        if modename is None:
-            modename = data['mode']
-        # Morning
+
+        ## Turning off one room during morning ## Do Nothing
         if (
             self.current_MODE == translations.morning
             and self.now_is_between(self.morning_runtime, self.execute_morning)
@@ -271,10 +296,12 @@ class ModeManagement(Hass):
             and roomname is not None
         ):
             return
+
+        ## Transition from night to morning ##
         if (
-            self.current_MODE == translations.night
+            self.current_MODE.startswith(translations.night)
             and self.now_is_between(self.morning_runtime, self.execute_morning)
-            and (modename == translations.normal
+            and (modename == translations.automagical
             or modename == translations.morning)
         ):
                 for item in self.turn_on_in_the_morning:
@@ -283,7 +310,7 @@ class ModeManagement(Hass):
                 self._cancel_listening_for_morning(0)
                 self.disableRelockDoor()
 
-        # Night
+        ## Transition to main "Night" mode ##
         if (
             data['mode'] == translations.night
             and self.now_is_between(self.night_runtime, self.execute_night)
@@ -296,39 +323,38 @@ class ModeManagement(Hass):
 
             self.enableRelockDoor()
 
-        # Away
+        ## Main "Away" mode ##
         if data['mode'] == translations.away:
             self.start_alarm()
 
             self.enableRelockDoor()
 
+        ## False alarm from your fire detection app ##
         elif data['mode'] == translations.false_alarm:
             modename = self.current_MODE
             self.fire_event(translations.MODE_CHANGE, mode = self.current_MODE, namespace = self.HASS_namespace)
 
+        ## Fire detected from your fire detection app ##
+        ## Updates input_text but not the current_MODE so it can go back to previous if false alarm
         elif data['mode'] == translations.fire:
-            self.call_service('input_text/set_value',
-                value = translations.fire,
-                entity_id = self.haLightModeText,
-                namespace = self.HASS_namespace
-            )
-            return
-
-        # Set mode
-        if roomname is None:
-            if modename == translations.reset:
-                self.current_MODE = translations.normal
-            else:
-                self.current_MODE = modename
-
-        if self.haLightModeText:
-            if roomname is not None:
+            if self.haLightModeText:
                 self.call_service('input_text/set_value',
-                    value = f"{modename} in {roomname}",
+                    value = translations.fire,
                     entity_id = self.haLightModeText,
                     namespace = self.HASS_namespace
                 )
+            return
+
+        # Store mode to current_MODE
+        if roomname is None:
+            if modename == translations.reset:
+                self.current_MODE = translations.automagical
             else:
+                self.current_MODE = modename
+
+        # Update input_text do display in GUI
+        if self.haLightModeText:
+            if roomname is None:
                 self.call_service('input_text/set_value',
                     value = self.current_MODE,
                     entity_id = self.haLightModeText,
@@ -390,7 +416,7 @@ class ModeManagement(Hass):
         """ Changes mode from morning to normal at given time.
         """
         if self.current_MODE == translations.morning:
-            self.fire_event(translations.MODE_CHANGE, mode = translations.normal, namespace = self.HASS_namespace)
+            self.fire_event(translations.MODE_CHANGE, mode = translations.automagical, namespace = self.HASS_namespace)
 
     def _waking_up(self, entity, attribute, old, new, kwargs) -> None:
         """ Reacts to morning sensors
@@ -401,7 +427,7 @@ class ModeManagement(Hass):
         ):
             self.fire_event(translations.MODE_CHANGE, mode = translations.morning, namespace = self.HASS_namespace)
         else:
-            self.fire_event(translations.MODE_CHANGE, mode = translations.normal, namespace = self.HASS_namespace)
+            self.fire_event(translations.MODE_CHANGE, mode = translations.automagical, namespace = self.HASS_namespace)
         self._cancel_listening_for_morning(0)
 
     def _going_to_bed(self, entity, attribute, old, new, kwargs) -> None:
@@ -415,10 +441,10 @@ class ModeManagement(Hass):
         """ Change to normal day light at this time if mode is night or morning.
         """
         if (
-            self.current_MODE == translations.night
+            self.current_MODE.startswith(translations.night)
             or self.current_MODE == translations.morning
         ):
-            self.fire_event(translations.MODE_CHANGE, mode = translations.normal, namespace = self.HASS_namespace)
+            self.fire_event(translations.MODE_CHANGE, mode = translations.automagical, namespace = self.HASS_namespace)
         self._cancel_listening_for_morning(0)
 
     def _good_night_now(self, kwargs) -> None:
@@ -471,6 +497,7 @@ class ModeManagement(Hass):
                 payload = "UNLOCK",
                 namespace = self.MQTT_namespace
             )
+        self.lastUnlockUser = 0
 
         # Doorlock listen
     def MQTT_doorlock_event(self, event_name, data, **kwargs) -> None:
@@ -486,48 +513,32 @@ class ModeManagement(Hass):
             and data['state'] == 'UNLOCK'
         ):
             self.lastUnlockTime = datetime.datetime.now()
+            self.lastUnlockUser = data['last_unlock_user']
 
             for person in self.presence:
-                if person['role'] == 'housekeeper':
+                if self.lastUnlockUser == person.lock_user:
                     if (
-                        data['last_unlock_user'] == person['lock_user']
+                        person.role == 'housekeeper'
                         and self.current_MODE == translations.away
-                        and self.housekeeperAtHome >= 1
+                        #and self.housekeeperAtHome >= 1
                     ):
                         self.current_MODE = translations.wash
                         self.fire_event(translations.MODE_CHANGE, mode = translations.wash, namespace = self.HASS_namespace)
-                        data = {
-                            'tag' : 'housekeeper_at_door'
-                            }
-                        self.notify_app.send_notification(
-                            message = f"{person['person']} unlocked door. Turned on wash lights",
-                            message_title = "Housekeeper",
-                            message_recipient = self.notify_receiver,
-                            also_if_not_home = True,
-                            data = data
-                        )
-
-                if 'lock_user' in person:
-                    if data['last_unlock_user'] == person['lock_user']:
-                        if not person['last_lock']:
-                            person.update(
-                                {'last_lock' : True}
-                            )
-                        if not self.anyone_at_main_house_home():
-                            self.nofify_on_alarm = False
-                            self.run_in(self._reset_alarm_notification, 20)
-                    else:
-                        person.update(
-                            {'last_lock' : False}
-                        )
-        elif (
-            data['last_unlock_source'] != 'self'
-            and data['state'] == 'LOCK'
-        ):
-            for person in self.presence:
-                person.update(
-                    {'last_lock' : False}
-                )
+                    data = {
+                        'tag' : 'last_unlock_user'
+                        }
+                    self.notify_app.send_notification(
+                        message = f"{person.person_id} unlocked the door",
+                        message_title = "Door unlock",
+                        message_recipient = self.notify_receiver,
+                        also_if_not_home = True,
+                        data = data
+                    )
+                    break
+                    
+            if not self.anyone_at_main_house_home():
+                self.nofify_on_alarm = False
+                self.run_in(self._reset_alarm_notification, 20)
 
     def _vacation_ending(self, entity, attribute, old, new, kwargs) -> None:
         """ Ends vacation when switch/button is turned off.
@@ -538,139 +549,140 @@ class ModeManagement(Hass):
             self.away_state = False
             self.start_vacuum()
 
-    def _presenceChange(self, entity, attribute, old, new, kwargs) -> None:
+    def _outsideChange(self, entity, attribute, old, new, kwargs) -> None:
         """ Listens for trackers and switches on presence.
         """
         # React to manual switches
-        if new == 'on':
-            new = translations.away
-            old = 'home'
-            for person in self.presence:
-                if 'outside' in person:
-                    if person['outside'] == entity:
-                        entity = person['person']
-        elif new == 'off':
-            for person in self.presence:
-                if 'outside' in person:
-                    if person['outside'] == entity:
-                        entity = person['person']
-                        if self.get_state(person['person'], namespace = self.HASS_namespace) == 'home':
-                            new = 'home'
+        for person in self.presence:
+            if person.outside_switch == entity:
+                if new == 'on':
+                    person.update_is_outside(is_outside=True)
+                    if person.home:
+                        self._away(person=person)
 
+                elif new == 'off':
+                    person.update_is_outside(is_outside=False)
+                    if person.home:
+                        self._home(person=person)
+
+    def _presenceChange(self, entity, attribute, old, new, kwargs) -> None:
+        """ Listens for trackers and switches on presence.
+        """
         # React to presence trackers
-        if new == 'home':
-            entity_tenant = False
+        for person in self.presence:
+            if person.person_id == entity:
+                if new == 'home':
+                    person.update_state(is_home=True)
+                    if person.outside_activated:
+                        self.ADapi.log(f"{person.person_id} outside activated when returning home. Is home: {person.is_home()}") ###
+                        return
+                    self._home(person=person)
 
-            for person in self.presence:
-                if person['person'] == entity:
-                    if 'outside' in person:
-                        if self.get_state(person['outside'], namespace = self.HASS_namespace) == 'on':
-                            return
-                    person.update(
-                        {'state': new }
-                    )
-                    if person['role'] == 'adult':
-                        self.stop_vacuum()
-                        self.adultAtHome += 1
-                    elif person['role'] == 'kid':
-                        self.kidsAtHome += 1
-                    elif person['role'] == 'family':
-                        self.stop_vacuum()
-                        self.extendedFamilyAtHome += 1
-                    elif person['role'] == 'tenant':
-                        self.tenantAtHome += 1
-                        entity_tenant = True
-                    elif person['role'] == 'housekeeper':
-                        self.housekeeperAtHome += 1
-                    break
+                elif old == 'home':
+                    person.update_state(is_home=False)
+                    if person.outside_activated:
+                        self.ADapi.log(f"{person.person_id} already outside activated when going away. Is home: {person.is_home()}") ###
+                        return
+                    self._away(person=person)
 
+    def _home(self, person:Person) -> None:
+
+        if person.role == 'adult':
+            self.stop_vacuum()
+            self.adultAtHome += 1
+        elif person.role == 'kid':
+            self.kidsAtHome += 1
+        elif person.role == 'family':
+            self.stop_vacuum()
+            self.extendedFamilyAtHome += 1
+        elif person.role == 'tenant':
+            self.tenantAtHome += 1
+            return # No current logic
+        elif person.role == 'housekeeper':
+            self.housekeeperAtHome += 1
+
+        if self.adultAtHome + self.kidsAtHome + self.extendedFamilyAtHome >= 1:
+            if self.current_MODE == translations.away:
+                self.current_MODE = translations.automagical
+                self.fire_event(translations.MODE_CHANGE, mode = translations.automagical)
+                self.stop_alarm()
+
+            if self.away_handler is not None:
+                if self.timer_running(self.away_handler):
+                    try:
+                        self.cancel_timer(self.away_handler)
+                    except Exception as e:
+                        self.log(
+                            f"Was not able to stop existing handler to stop setting away state. {e}",
+                            level = "DEBUG"
+                        )
+                self.away_handler = None
+            
+            if self.adultAtHome + self.extendedFamilyAtHome >= 1 and self.current_MODE not in (translations.away, translations.night):
+                self.disableRelockDoor()
+
+        elif person.role == 'housekeeper':
+            data = {
+                'tag' : 'last_unlock_user'
+                }
+            self.notify_app.send_notification(
+                message = f"Housekeeper {person.person_id} entered",
+                message_title = "Housekeeping",
+                message_recipient = self.notify_receiver,
+                also_if_not_home = True,
+                data = data
+            )
+            if self.current_MODE == translations.away:
+                self.stop_alarm()
+
+    def _away(self, person:Person) -> None:
+
+        enable_start_vacuum = False
+
+        if person.role == 'adult':
+            self.adultAtHome -= 1
+            enable_start_vacuum = True
+        elif person.role == 'kid':
+            self.kidsAtHome -= 1
+        elif person.role == 'family':
+            self.extendedFamilyAtHome -= 1
+        elif person.role == 'tenant':
+            self.tenantAtHome -= 1
+            return
+        elif person.role == 'housekeeper':
+            self.housekeeperAtHome -= 1
+        
+        if (
+            person.stopMorning
+            and self.current_MODE == translations.morning
+            and self.anyone_at_main_house_home()
+        ):
+            self.current_MODE = translations.automagical
+            self.fire_event(translations.MODE_CHANGE, mode = translations.automagical, namespace = self.HASS_namespace)
+            return
+
+
+        if self.adultAtHome + self.extendedFamilyAtHome == 0:
+            self.enableRelockDoor()
+
+            if self.get_state(self.keep_mode_when_outside, namespace = self.HASS_namespace) == 'on':
+                return
+            
             if (
-                self.adultAtHome + self.kidsAtHome + self.extendedFamilyAtHome >= 1
-                and not entity_tenant
+                self.current_MODE.startswith(translations.night)
+                and self.now_is_between(self.night_runtime, self.morning_runtime)
             ):
-                if self.current_MODE == translations.away:
-                    self.current_MODE = translations.normal
-                    self.fire_event(translations.MODE_CHANGE, mode = translations.normal)
-                    self.stop_alarm()
+                return
 
-                if self.away_handler is not None:
-                    if self.timer_running(self.away_handler):
-                        try:
-                            self.cancel_timer(self.away_handler)
-                        except Exception as e:
-                            self.log(
-                                f"Was not able to stop existing handler to stop setting away state. {e}",
-                                level = "DEBUG"
-                            )
-                    self.away_handler = None
-                
-                if self.adultAtHome + self.extendedFamilyAtHome >= 1 and self.current_MODE not in (translations.away, translations.night):
-                    self.disableRelockDoor()
-
-            elif self.housekeeperAtHome >= 1:
-                data = {
-                    'tag' : 'housekeeper_at_door'
-                    }
-                self.notify_app.send_notification(
-                    message = f"Housekeeper {entity} entered",
-                    message_title = "Housekeeping",
-                    message_recipient = self.notify_receiver,
-                    also_if_not_home = True,
-                    data = data
-                )
-                if self.current_MODE == translations.away:
-                    self.stop_alarm()
-
-        elif old == 'home':
-            enable_start_vacuum = False
-
-            for person in self.presence:
-                if person['person'] == entity:
-                    person.update(
-                        {'state': new }
-                    )
-                    if person['role'] == 'adult':
-                        self.adultAtHome -= 1
-                        enable_start_vacuum = True
-                    elif person['role'] == 'kid':
-                        self.kidsAtHome -= 1
-                    elif person['role'] == 'family':
-                        self.extendedFamilyAtHome -= 1
-                    elif person['role'] == 'tenant':
-                        self.tenantAtHome -= 1
-                    elif person['role'] == 'housekeeper':
-                        self.housekeeperAtHome -= 1
-                    
-                    if (
-                        'stopMorning' in person
-                        and self.current_MODE == translations.morning
-                        and self.anyone_at_main_house_home()
-                    ):
-                        self.current_MODE = translations.normal
-                        self.fire_event(translations.MODE_CHANGE, mode = translations.normal, namespace = self.HASS_namespace)
-                    break
-
-            if self.adultAtHome + self.extendedFamilyAtHome == 0:
-                self.enableRelockDoor()
-
-                if self.get_state(self.keep_mode_when_outside, namespace = self.HASS_namespace) == 'on':
-                    return
-                
-                if (
-                    str(self.current_MODE)[:5] == translations.night
-                    and self.now_is_between(self.night_runtime, self.morning_runtime)
-                ):
-                   return
-
-                self.away_handler = self.run_in(self.setAwayMode, self.delay_before_setting_away, enable_start_vacuum = enable_start_vacuum)
+            self.away_handler = self.run_in(
+                                            self.setAwayMode,
+                                            self.delay_before_setting_away,
+                                            enable_start_vacuum = enable_start_vacuum)
 
     def setAwayMode(self, **kwargs) -> None:
         """ Sets away mode.
         """
         enable_start_vacuum = kwargs['enable_start_vacuum']
-        for item in self.prevent_vacuum:
-            if self.get_state(item, namespace = self.HASS_namespace) == 'on':
-                enable_start_vacuum = False
         if (
             not self.away_state
             and self.now_is_between(self.morning_runtime, '18:00:00')
@@ -714,8 +726,8 @@ class ModeManagement(Hass):
         """ Listens for sensors to send notification if triggered and play music.
         """
         for person in self.presence:
-            if person['role'] != 'tenant':
-                if person['state'] == 'home':
+            if person.role != 'tenant':
+                if person.is_home():
                     return
 
         if self.nofify_on_alarm:
@@ -781,55 +793,64 @@ class ModeManagement(Hass):
         self.nofify_on_alarm = True
 
     def stop_vacuum(self) -> None:
-        if self.enable_stop_vacuum:
-            for robot in self.vacuum:
-                if self.get_state(robot['vacuum']) == 'cleaning':
-                    self.call_service('vacuum/return_to_base', entity_id = robot['vacuum'], namespace = self.HASS_namespace)
-            self.enable_stop_vacuum = False
+        for robot in self.vacuum:
+            if not robot.manual_start and self.get_state(robot.vacuum) == 'cleaning':
+                self.call_service('vacuum/return_to_base', entity_id = robot.vacuum, namespace = self.HASS_namespace)
+
 
     def start_vacuum(self) -> None:
         for robot in self.vacuum:
-            start_robot = False
+            for item in robot.prevent_vacuum:
+                if self.get_state(item, namespace = self.HASS_namespace) == 'on':
+                    continue
             if (
-                (self.get_state(robot['vacuum'], namespace = self.HASS_namespace) == 'docked'
-                or self.get_state(robot['vacuum'], namespace = self.HASS_namespace) == 'charging')
+                (self.get_state(robot.vacuum, namespace = self.HASS_namespace) == 'docked'
+                or self.get_state(robot.vacuum, namespace = self.HASS_namespace) == 'charging')
             ):
-                battery_level = 101
-                if 'battery' in robot:
-                    try:
-                        battery_level = float(self.get_state(robot['battery'], namespace = self.HASS_namespace))
-                    except (ValueError, TypeError):
-                        battery_level = 101
-                if battery_level == 101:
-                    try:
-                        battery_level = float(self.get_state(robot['vacuum'], attribute='battery_level', namespace = self.HASS_namespace))
-                    except (ValueError, TypeError):
-                        self.log(
-                            f"Not able to get battery_level from {robot['vacuum']}. Try defining 'battery: sensor.vacuum_battery' for your robot",
-                            level = 'INFO'
-                        )
-                        battery_level = 100
-                if battery_level > 40:
+                if self.get_battery_level(robot=robot) > 40:
+                    # Start robot by daily routine if provided, else full program
                     if 'daily_routine' in robot:
-                        if robot['daily_routine'].startswith('button'):
+                        if robot.daily_routine.startswith('button'):
                             self.call_service('button/press',
-                                entity_id = robot['daily_routine'],
+                                entity_id = robot.daily_routine,
                                 namespace = self.HASS_namespace)
                         else:
                             try:
                                 self.call_service('switch/turn_on',
-                                    entity_id = robot['daily_routine'],
+                                    entity_id = robot.daily_routine,
                                     namespace = self.HASS_namespace)
                             except Exception as e:
                                 self.log(
-                                    f"Not able to start {robot['daily_routine']}. Not a button or a switch. Please make a feasture request with information and error log: {e}",
+                                    f"Not able to start {robot.daily_routine}. Not a button or a switch. "
+                                    f"Please make a feasture request with information and error log: {e}",
                                     level = 'INFO'
                                 )
                     else:
                         self.call_service('vacuum/start',
-                            entity_id = robot['vacuum'],
+                            entity_id = robot.vacuum,
                             namespace = self.HASS_namespace)
-                    self.enable_stop_vacuum = True
+                    robot.manual_start = False
+            else:
+                robot.manual_start = True
+
+    def get_battery_level(self, robot):
+        battery_level = 101
+        if robot.battery is not None:
+            try:
+                battery_level = float(self.get_state(robot.battery, namespace = self.HASS_namespace))
+            except (ValueError, TypeError):
+                pass
+        if battery_level == 101:
+            try:
+                battery_level = float(self.get_state(robot.vacuum, attribute='battery_level', namespace = self.HASS_namespace))
+            except (ValueError, TypeError):
+                self.log(
+                    f"Not able to get battery_level from {robot.vacuum}. Try defining 'battery: sensor.vacuum_battery' for your robot",
+                    level = 'INFO'
+                )
+                battery_level = 100
+        return battery_level
+
 
     def _is_holiday(self, date):
         if self.holidays is not None:

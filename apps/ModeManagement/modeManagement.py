@@ -86,6 +86,7 @@ class ModeManagement(Hass):
 
             if person.outside_switch is not None:
                 self.listen_state(self._outsideChange, person.outside_switch, namespace = self.HASS_namespace)
+                person.update_is_outside(is_outside=self.get_state(person.outside_switch) == 'on')
 
             person.update_state(is_home=self.get_state(person.person_id) == 'home')
 

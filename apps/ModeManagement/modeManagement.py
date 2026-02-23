@@ -577,14 +577,12 @@ class ModeManagement(Hass):
                 if new == 'home':
                     person.update_state(is_home=True)
                     if person.outside_activated:
-                        self.log(f"{person.person_id} outside activated when returning home. Is home: {person.is_home()}") ###
                         return
                     self._home(person=person)
 
                 elif old == 'home':
                     person.update_state(is_home=False)
                     if person.outside_activated:
-                        self.log(f"{person.person_id} already outside activated when going away. Is home: {person.is_home()}") ###
                         return
                     self._away(person=person)
 

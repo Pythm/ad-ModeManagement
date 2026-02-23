@@ -87,6 +87,8 @@ class ModeManagement(Hass):
             if person.outside_switch is not None:
                 self.listen_state(self._outsideChange, person.outside_switch, namespace = self.HASS_namespace)
 
+            person.update_state(is_home=self.get_state(person.person_id) == 'home')
+
             if person.is_home():
                 if person.role == 'adult':
                     self.adultAtHome += 1
@@ -574,14 +576,14 @@ class ModeManagement(Hass):
                 if new == 'home':
                     person.update_state(is_home=True)
                     if person.outside_activated:
-                        self.ADapi.log(f"{person.person_id} outside activated when returning home. Is home: {person.is_home()}") ###
+                        self.log(f"{person.person_id} outside activated when returning home. Is home: {person.is_home()}") ###
                         return
                     self._home(person=person)
 
                 elif old == 'home':
                     person.update_state(is_home=False)
                     if person.outside_activated:
-                        self.ADapi.log(f"{person.person_id} already outside activated when going away. Is home: {person.is_home()}") ###
+                        self.log(f"{person.person_id} already outside activated when going away. Is home: {person.is_home()}") ###
                         return
                     self._away(person=person)
 

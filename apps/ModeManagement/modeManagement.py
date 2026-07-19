@@ -280,7 +280,6 @@ class ModeManagement(Hass):
             self.adultAtHome == 0
             and self.kidsAtHome == 0
             and self.extendedFamilyAtHome == 0
-            and self.housekeeperAtHome == 0
         ):
             return False
         return True
@@ -672,13 +671,14 @@ class ModeManagement(Hass):
             if (
                 self.current_MODE.startswith(translations.night)
                 and self.now_is_between(self.night_runtime, self.morning_runtime)
+                and self.kidsAtHome > 0
             ):
                 return
 
-            self.away_handler = self.run_in(
-                                            self.setAwayMode,
-                                            self.delay_before_setting_away,
-                                            enable_start_vacuum = enable_start_vacuum)
+        self.away_handler = self.run_in(
+                                        self.setAwayMode,
+                                        self.delay_before_setting_away,
+                                        enable_start_vacuum = enable_start_vacuum)
 
     def setAwayMode(self, **kwargs) -> None:
         """ Sets away mode.
@@ -801,10 +801,12 @@ class ModeManagement(Hass):
 
     def start_vacuum(self) -> None:
         for robot in self.vacuum:
+            run_vacuum = True
             for item in robot.prevent_vacuum:
                 if self.get_state(item, namespace = self.HASS_namespace) == 'on':
-                    continue
+                    run_vacuum = False
             if (
+                run_vacuum and
                 (self.get_state(robot.vacuum, namespace = self.HASS_namespace) == 'docked'
                 or self.get_state(robot.vacuum, namespace = self.HASS_namespace) == 'charging')
             ):

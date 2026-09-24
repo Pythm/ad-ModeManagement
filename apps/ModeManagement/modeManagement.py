@@ -2,7 +2,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 from appdaemon.plugins.hass.hassapi import Hass
 import datetime
@@ -641,7 +641,6 @@ class ModeManagement(Hass):
 
         if person.role == 'adult':
             self.adultAtHome -= 1
-            enable_start_vacuum = True
         elif person.role == 'kid':
             self.kidsAtHome -= 1
         elif person.role == 'family':
@@ -674,6 +673,7 @@ class ModeManagement(Hass):
                 and self.kidsAtHome > 0
             ):
                 return
+            enable_start_vacuum = True
 
         self.away_handler = self.run_in(
                                         self.setAwayMode,

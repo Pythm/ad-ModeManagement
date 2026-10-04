@@ -15,7 +15,7 @@
 ---
 
 ## 🚨 Breaking Changes
-### **0.3.2**
+### **0.3.1**
 - **Translations**: If you translate or rename modes, set the language once with the new `ModeTranslation` app that comes with Lightwand 2.3.0 and add `dependencies: mode_translation` to this app, so the mode names are loaded before this app starts. Without it the result depends on the order AppDaemon starts your apps in. English users need no change. See [Lightwand: Translating or Changing Modes](https://github.com/Pythm/ad-Lightwand#-translating-or-changing-modes).
 - **Fix**: The mode event fired when someone arrives home from `away` now uses `HASS_namespace` like all other events from this app.
 

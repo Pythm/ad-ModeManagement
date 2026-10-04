@@ -604,7 +604,7 @@ class ModeManagement(Hass):
         if self.adultAtHome + self.kidsAtHome + self.extendedFamilyAtHome >= 1:
             if self.current_MODE == translations.away:
                 self.current_MODE = translations.automagical
-                self.fire_event(translations.MODE_CHANGE, mode = translations.automagical)
+                self.fire_event(translations.MODE_CHANGE, mode = translations.automagical, namespace = self.HASS_namespace)
                 self.stop_alarm()
 
             if self.away_handler is not None:

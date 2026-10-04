@@ -15,11 +15,15 @@
 ---
 
 ## 🚨 Breaking Changes
+### **0.3.2**
+- **Translations**: If you translate or rename modes, set the language once with the new `ModeTranslation` app that comes with Lightwand 2.3.0 and add `dependencies: mode_translation` to this app, so the mode names are loaded before this app starts. Without it the result depends on the order AppDaemon starts your apps in. English users need no change. See [Lightwand: Translating or Changing Modes](https://github.com/Pythm/ad-Lightwand#-translating-or-changing-modes).
+- **Fix**: The mode event fired when someone arrives home from `away` now uses `HASS_namespace` like all other events from this app.
+
 ### **0.2.1**
 - **Morning routine**: Defining `country_code` is now optional and app will not try to find location based on Appdaemon config. Lack of doing so will fire **morning** mode every day.
 
 ### **0.2.0**
-- **Lightwand translations**: App now uses Lightwand translations singleton. This requires at least one app with Lightwand version 2.0.0 or later running on your system. Check out https://github.com/Pythm/ad-Lightwand?tab=readme-ov-file#-translating-or-changing-modes on how to use your own mode names.
+- **Lightwand translations**: App now uses Lightwand translations singleton. This requires Lightwand version 2.0.0 or later installed in your AppDaemon (the mode names are read from Lightwand's `translations_lightmodes` module). Check out https://github.com/Pythm/ad-Lightwand?tab=readme-ov-file#-translating-or-changing-modes on how to use your own mode names.
 
 ### **0.1.12**
 - **MQTT Namespace Update**: Default MQTT namespace changed to `'mqtt'` to align with AppDaemon defaults.

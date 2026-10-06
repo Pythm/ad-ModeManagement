@@ -1,7 +1,15 @@
+""" Pydantic models for the ModeManagement app config.
+
+    Person is one entry in the ``presence`` list, Vacuum one entry in the ``vacuum`` list.
+    Unknown YAML keys are ignored, so a typo in a key is silently dropped.
+"""
 from __future__ import annotations
 from typing import Optional, List, Literal, Union
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+# 'family' (extended family) behaves like 'adult', except that the optional 'family'
+# light mode is the normal mode when family is home without an adult.
+# See MAIN_HOUSE_ROLES and ADULT_ROLES in modeManagement.
 Role = Literal['adult', 'kid', 'tenant', 'housekeeper', 'family']
 
 
@@ -32,22 +40,14 @@ class Person(BaseModel):
     person_id: str = Field(alias="person")
     role: Role = 'adult'
 
-    outside_switch: Optional[str] = Field(None, alias="outside_switch")
-    outside_input: Optional[str] = Field(None, alias="outside")
+    # Both ``outside_switch`` and the old ``outside`` are accepted in YAML
+    outside_switch: Optional[str] = Field(None, validation_alias=AliasChoices('outside_switch', 'outside'))
 
     outside_activated: bool = False
     lock_user: Optional[Union[str, int]] = None
     home: bool = True
-    last_lock: bool = False
 
     stopMorning: bool = False
-
-    @model_validator(mode='after')
-    def set_outside(self) -> 'Person':
-        # Both ``outside`` and ``outside_switch`` are accepted in YAML
-        if self.outside_input is not None:
-            self.outside_switch = self.outside_input
-        return self
 
     # ---------------------------------------------------------------------
     # Convenience methods
@@ -59,18 +59,12 @@ class Person(BaseModel):
         return self.home
 
     def update_is_outside(self, is_outside: bool) -> None:
+        """Set by the outside switch listener."""
         self.outside_activated = is_outside
 
     def update_state(self, is_home: bool) -> None:
+        """Set by the tracker listener. ``True`` only when the tracker says ``home``."""
         self.home = is_home
-
-    def update_last_lock(self, locked: bool) -> None:
-        self.last_lock = locked
-
-    @property
-    def role_type(self) -> str:
-        """Return the role as a plain string."""
-        return str(self.role)
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return (

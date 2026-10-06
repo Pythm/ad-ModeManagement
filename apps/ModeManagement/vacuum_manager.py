@@ -12,17 +12,19 @@
 """
 __version__ = "0.1.0"
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from appdaemon import adbase as ad
 
 from modeManagement_config import Vacuum
 
 DOCKED_STATES = ('docked', 'charging')
-BAD_STATES = (None, 'unavailable', 'unknown')
+# Entity states that carry no information. Shared with modeManagement
+UNAVAILABLE_STATES = (None, 'unavailable', 'unknown')
 
 
 def _as_list(value) -> list:
+    """ Wraps a single value in a list. None gives an empty list. Shared with modeManagement. """
     if value is None:
         return []
     if isinstance(value, (list, tuple, set)):
@@ -33,7 +35,8 @@ def _as_list(value) -> list:
 class VacuumControl:
     """ Start and stop robot vacuums. No AppDaemon app, so it can be used by other apps. """
 
-    def __init__(self, ADapi, namespace: str, vacuums: list, global_prevent=None, min_battery: float = 40) -> None:
+    def __init__(self, ADapi, namespace: str, vacuums: list, global_prevent: Optional[list] = None, min_battery: float = 40) -> None:
+        """ Builds the Vacuum models from the app args, reads each state once and listens for docking. """
         self.ADapi = ADapi
         self.namespace = namespace
         self.min_battery = min_battery
@@ -94,7 +97,7 @@ class VacuumControl:
         """ Starts docked vacuums when no prevent entity is on and the battery is high enough. """
         for robot in self.vacuums:
             state = self.ADapi.get_state(robot.vacuum, namespace=self.namespace)
-            if state in BAD_STATES:
+            if state in UNAVAILABLE_STATES:
                 continue
             if state not in DOCKED_STATES:
                 # Cleaning on its own or started by us earlier
@@ -112,6 +115,7 @@ class VacuumControl:
             robot.started = True
 
     def _prevented(self, robot: Vacuum) -> bool:
+        """ True if any prevent entity of the robot is on. """
         for item in robot.prevent_vacuum:
             if self.ADapi.get_state(item, namespace=self.namespace) == 'on':
                 self.ADapi.log(f"{robot.vacuum} not started. {item} is on", level='DEBUG')
@@ -138,6 +142,7 @@ class VacuumControl:
             self.ADapi.log(f"Not able to start {routine} for {robot.vacuum}: {exc}", level='WARNING')
 
     def _enough_battery(self, robot: Vacuum) -> bool:
+        """ True if the battery is above the robot's or the app wide minimum. """
         level = self._battery_level(robot)
         if level is None:
             return True  # Unknown level is logged once, the vacuum itself refuses to start if too low
@@ -147,7 +152,7 @@ class VacuumControl:
             return False
         return True
 
-    def _battery_level(self, robot: Vacuum):
+    def _battery_level(self, robot: Vacuum) -> Optional[float]:
         """ Battery sensor first, then the battery_level attribute. None if not found. """
         sources = []
         if robot.battery is not None:
@@ -174,8 +179,9 @@ class VacuumManager(ad.ADBase):
     """ Stand-alone app: controls vacuums from the VACUUM_CONTROL event. """
 
     def initialize(self) -> None:
+        """ Builds the VacuumControl from the app args and listens for the control event. """
         self.ADapi = self.get_ad_api()
-        self.HASS_namespace = self.args.get('HASS_namespace', 'default')
+        self.HASS_namespace:str = self.args.get('HASS_namespace', 'default')
 
         self.control = VacuumControl(
             self.ADapi,
@@ -193,6 +199,7 @@ class VacuumManager(ad.ADBase):
         )
 
     def _control_event(self, event_name, data, **kwargs) -> None:
+        """ Event callback: 'action' is start or stop. """
         action = data.get('action')
         if action == 'start':
             self.control.start()

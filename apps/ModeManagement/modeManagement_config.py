@@ -1,7 +1,6 @@
 from __future__ import annotations
-from typing import Optional, List, Dict, Literal, Union
-from pydantic import BaseModel, Field, validator, model_validator
-from enum import Enum
+from typing import Optional, List, Literal, Union
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Role = Literal['adult', 'kid', 'tenant', 'housekeeper', 'family']
 
@@ -12,18 +11,23 @@ class Person(BaseModel):
     Attributes
     ----------
     person_id:
-        The entity ID of the person's presence sensor.
+        The entity ID of the person (or device tracker). YAML key ``person``.
     role:
         The role of the person. Defaults to ``"adult"``.
     outside_switch:
-        Optional entity ID of a switch that indicates if the person is outside.
+        Optional entity ID of a switch that marks the person as outside.
+        YAML key ``outside_switch`` or ``outside``.
+    outside_activated:
+        ``True`` while the outside switch is on.
     lock_user:
         Optional user ID for door lock/unlock tracking.
-    state:
-        Current presence state – either ``"home"`` or ``"away"``. ``None`` means unknown.
-    last_lock:
-        ``True`` if the person has last locked the door; ``False`` otherwise.
+    home:
+        ``True`` when the tracker says ``home``.
+    stopMorning:
+        If ``True`` the morning mode ends when this person leaves and someone else is home.
     """
+
+    model_config = ConfigDict(populate_by_name=True, extra='ignore')
 
     person_id: str = Field(alias="person")
     role: Role = 'adult'
@@ -33,7 +37,6 @@ class Person(BaseModel):
 
     outside_activated: bool = False
     lock_user: Optional[Union[str, int]] = None
-    #state: Optional[str] = None
     home: bool = True
     last_lock: bool = False
 
@@ -41,72 +44,52 @@ class Person(BaseModel):
 
     @model_validator(mode='after')
     def set_outside(self) -> 'Person':
-        # Manually move the value from the input field to the main field
+        # Both ``outside`` and ``outside_switch`` are accepted in YAML
         if self.outside_input is not None:
             self.outside_switch = self.outside_input
         return self
-
-    class Config:
-        allow_population_by_field_name = True
-        use_enum_values = True
-        extra = 'ignore'
-        frozen = False
 
     # ---------------------------------------------------------------------
     # Convenience methods
     # ---------------------------------------------------------------------
     def is_home(self) -> bool:
-        """Return ``True`` if the person is ``"home"``."""
+        """Return ``True`` if the person is home and not marked as outside."""
         if self.outside_activated:
             return False
         return self.home
 
     def update_is_outside(self, is_outside: bool) -> None:
-
         self.outside_activated = is_outside
 
     def update_state(self, is_home: bool) -> None:
-
         self.home = is_home
 
     def update_last_lock(self, locked: bool) -> None:
-
         self.last_lock = locked
 
     @property
-    def role_count(self) -> int:
-        """Return the numeric count for the person's role.
-
-        Historically each person counted as ``1`` toward the aggregate of their role.  The
-        property is provided for completeness and mirrors the legacy ``get_role_count``.
-        """
-        return 1
-
-    @property
     def role_type(self) -> str:
-        """Return the role value as a plain string.
+        """Return the role as a plain string."""
+        return str(self.role)
 
-        The legacy code used ``get_role_type`` to obtain the role; the Pydantic model keeps
-        the same behaviour but returns a plain string instead of the Enum instance.
-        """
-        return self.role.value
-
-    # ---------------------------------------------------------------------
-    # Representation helpers
-    # ---------------------------------------------------------------------
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return (
             f"Person(person_id='{self.person_id}', role='{self.role}', "
-            f"state='{self.state}', last_lock={self.last_lock})"
+            f"home={self.home}, outside={self.outside_activated})"
         )
 
 
 class Vacuum(BaseModel):
-    vacuum: str                        # name / entity_id of the robot
-    battery: Optional[str] = None      # optional sensor that reports battery level
-    daily_routine: Optional[str] = None # button / switch that starts a routine
-    prevent_vacuum: Optional[List[str]] = Field(default_factory=list)
-    manual_start: bool = False
+    """One robot vacuum cleaner."""
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(extra='ignore')
+
+    vacuum: str                                   # entity_id of the robot
+    battery: Optional[str] = None                 # optional sensor that reports battery level
+    daily_routine: Optional[str] = None           # button / switch / script that starts a routine
+    min_battery: Optional[float] = None           # overrides the app wide minimum battery level
+    prevent_vacuum: List[str] = Field(default_factory=list)
+
+    # Runtime state, not configuration
+    manual_start: bool = False                    # Cleaning was not started by the app
+    started: bool = False                         # Started by the app and not yet docked

@@ -643,7 +643,9 @@ class ModeManagement(ad.ADBase):
         """ Enables auto relock and locks the door after LOCK_DELAY, or disables auto
             relock and unlocks the door after UNLOCK_DELAY.
             Unlocking is only done with unlock_door_when_home. The opposite pending
-            action is cancelled, and a pending action of the same kind is left alone.
+            action is cancelled. A pending lock is left alone (so repeated calls do not
+            push the lock out), but a pending unlock is always restarted: disabling auto
+            relock does not unlock the door by itself, so the unlock command must go out.
         """
         if not self.mqtt_door_lock:
             return
@@ -652,13 +654,12 @@ class ModeManagement(ad.ADBase):
         if enable:
             self._cancel_timer(self._unlock_timer)
             self._unlock_timer = None
-            pending = self._lock_timer
+            if self._lock_timer is not None and self.ADapi.timer_running(self._lock_timer):
+                return # Already on its way
         else:
             self._cancel_timer(self._lock_timer)
             self._lock_timer = None
-            pending = self._unlock_timer
-        if pending is not None and self.ADapi.timer_running(pending):
-            return # Already on its way
+            self._cancel_timer(self._unlock_timer) # Restart instead of stacking timers
 
         self._publish_to_doors("/set/auto_relock", "true" if enable else "false")
         if enable:

@@ -57,7 +57,7 @@ The app also uses `pydantic`. It is not listed in `requirements.txt`, because it
 
 Other apps:
   - [Lightwand](https://github.com/Pythm/ad-Lightwand) 2.3.0 or later is required (mode names). Install it with HACS or by cloning it.
-  - [Pythm_AppdaemonApps](https://github.com/Pythm/Pythm_AppdaemonApps) is optional, only for `snapshot_directory`. Clone it into your `apps` folder yourself.
+  - [Pythm_AppdaemonApps](https://github.com/Pythm/Pythm_AppdaemonApps) is optional. Clone it into your `apps` folder yourself. It has two uses here: its [`notify_mobiles`](https://github.com/Pythm/Pythm_AppdaemonApps#notify_mobiles) app can send the notifications (`notify_app`, see [Notifications](#-notifications)), and `utils_apps` is needed for `snapshot_directory`.
 
 This repository is **not** published to HACS, so it is installed by cloning. Neither `git clone` nor `requirements.txt` installs other repositories automatically, so each repository above has to be installed on its own.
 
@@ -226,7 +226,19 @@ Use either `vacuum:` or `vacuum_event` in ModeManagement, not both. With both se
 
 ### 📢 Notifications  
 - Configure `notify_receiver` with a list of devices (e.g., `mobile_app_your_phone`).  
-- You can use a custom notification app instead with `notify_app` that contains the `send_notification` function. It is called as `send_notification(message=..., message_title=..., message_recipient=<notify_receiver>, also_if_not_home=True, data=...)`. If the app is not found, a warning is logged and Home Assistant `notify` is used.
+- Optional: use the `notify_mobiles` app from [Pythm_AppdaemonApps](https://github.com/Pythm/Pythm_AppdaemonApps#notify_mobiles) (clone that repository into your `apps` folder and set it up in your own YAML). Then set `notify_app: notify_mobiles` (the name you gave the app in YAML) and add it to `dependencies`, so it has started before this app:
+
+  ```yaml
+  ModeManagement:
+    module: modeManagement
+    class: ModeManagement
+    dependencies:
+      - notify_mobiles
+    notify_app: notify_mobiles
+  ```
+
+  A `dependencies` entry naming an app that does not exist stops all your apps from starting, so only add it when `notify_mobiles` is configured. `notify_receiver` is then passed on to it as `message_recipient`.
+- You can also write your own notification app instead, with a `send_notification` function. It is called as `send_notification(message=..., message_title=..., message_recipient=<notify_receiver>, also_if_not_home=True, data=...)`. If the app is not found, a warning is logged and Home Assistant `notify` is used.
 
 Messages sent:
 
@@ -300,7 +312,7 @@ When a sensor in `alarmsensors` is triggered while no one is home, the notificat
 | `family`             | string     | (optional)     | Light mode used instead of `automagical` while a family member is home and no adult is. See [Family light mode](#family-light-mode). |
 | `vacuum_earliest_start` | string  | `morning_start_listen_time` | Earliest time of day vacuums are started when leaving. |
 | `vacuum_latest_start` | string    | `"18:00:00"`   | Latest time of day vacuums are started when leaving.                         |
-| `notify_app`         | string     | (optional)     | AppDaemon app with `send_notification`. Home Assistant `notify` is used without it. |
+| `notify_app`         | string     | (optional)     | AppDaemon app with `send_notification`, for example `notify_mobiles` from Pythm_AppdaemonApps (add it to `dependencies`, see [Notifications](#-notifications)). Home Assistant `notify` is used without it. |
 | `prevent_vacuum`     | list       | (optional)     | Sensors to prevent vacuum cleaners from running.                            |
 | `turn_on_in_the_morning` | list   | (optional)     | Entities that are `off` are turned on when the mode changes from night to morning or normal between `morning_start_listen_time` and `execute_morning_at`. |
 | `turn_off_at_night`  | list       | (optional)     | Entities that are `on` are turned off when night mode is set between `night_start_listen_time` and `execute_night_at`. |

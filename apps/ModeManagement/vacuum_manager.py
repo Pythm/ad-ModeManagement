@@ -21,6 +21,9 @@ from modeManagement_config import Vacuum
 DOCKED_STATES = ('docked', 'charging')
 # Entity states that carry no information. Shared with modeManagement
 UNAVAILABLE_STATES = (None, 'unavailable', 'unknown')
+# Battery percent a robot must be above to start. One place for both apps, so the
+# embedded and the stand-alone setup cannot drift apart
+DEFAULT_MIN_BATTERY = 40
 
 
 def _as_list(value) -> list:
@@ -35,7 +38,7 @@ def _as_list(value) -> list:
 class VacuumControl:
     """ Start and stop robot vacuums. No AppDaemon app, so it can be used by other apps. """
 
-    def __init__(self, ADapi, namespace: str, vacuums: list, global_prevent: Optional[list] = None, min_battery: float = 40) -> None:
+    def __init__(self, ADapi, namespace: str, vacuums: list, global_prevent: Optional[list] = None, min_battery: float = DEFAULT_MIN_BATTERY) -> None:
         """ Builds the Vacuum models from the app args, reads each state once and listens for docking. """
         self.ADapi = ADapi
         self.namespace = namespace
@@ -183,12 +186,17 @@ class VacuumManager(ad.ADBase):
         self.ADapi = self.get_ad_api()
         self.HASS_namespace:str = self.args.get('HASS_namespace', 'default')
 
+        # min_battery is the key for this app. vacuum_min_battery is the ModeManagement
+        # key, accepted so a config copied from there keeps its limit
+        min_battery = self.args.get('min_battery', None)
+        if min_battery is None:
+            min_battery = self.args.get('vacuum_min_battery', DEFAULT_MIN_BATTERY)
         self.control = VacuumControl(
             self.ADapi,
             self.HASS_namespace,
             self.args.get('vacuum', []),
             self.args.get('prevent_vacuum', []),
-            self.args.get('min_battery', 40),
+            min_battery,
         )
         if not self.control.vacuums:
             self.ADapi.log(f"{self.name}: No vacuum configured", level='WARNING')

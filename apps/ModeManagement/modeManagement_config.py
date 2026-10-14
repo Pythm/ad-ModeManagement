@@ -1,11 +1,12 @@
 """ Pydantic models for the ModeManagement app config.
 
-    Person is one entry in the ``presence`` list, Vacuum one entry in the ``vacuum`` list.
+    Person is one entry in the ``presence`` list, Vacuum one entry in the ``vacuum`` list,
+    AlarmMedia one entry in the ``alarm_media`` list.
     Unknown YAML keys are ignored, so a typo in a key is silently dropped.
 """
 from __future__ import annotations
 from typing import Optional, List, Literal, Union
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 # 'family' (extended family) behaves like 'adult', except that the optional 'family'
 # light mode is the normal mode when family is home without an adult.
@@ -45,7 +46,9 @@ class Person(BaseModel):
 
     outside_activated: bool = False
     lock_user: Optional[Union[str, int]] = None
-    home: bool = True
+    # False until the tracker has been read in _setup_presence. A missing tracker
+    # must not count as somebody home, that would silence the alarm and block away
+    home: bool = False
 
     stopMorning: bool = False
 
@@ -87,3 +90,27 @@ class Vacuum(BaseModel):
     # Runtime state, not configuration
     manual_start: bool = False                    # Cleaning was not started by the app
     started: bool = False                         # Started by the app and not yet docked
+
+
+class AlarmMedia(BaseModel):
+    """One player to start when an alarm sensor is triggered (entry in ``alarm_media``)."""
+
+    model_config = ConfigDict(extra='ignore')
+
+    player: str                                   # media_player that plays the playlist
+    playlist: str                                 # media_content_id, played as 'music'
+    amp: Optional[str] = None                     # media_player for source and volume
+    source: Optional[str] = None                  # select_source on amp before playback
+    volume: Optional[float] = None                # volume_level on amp before playback
+    normal_volume: Optional[float] = None         # volume_level on amp set back after the alarm
+
+    @model_validator(mode='after')
+    def _amp_required(self) -> 'AlarmMedia':
+        """source, volume and normal_volume are all sent to amp, so they are useless without it."""
+        needs_amp = [
+            key for key in ('source', 'volume', 'normal_volume')
+            if getattr(self, key) is not None
+        ]
+        if needs_amp and self.amp is None:
+            raise ValueError(f"{', '.join(needs_amp)} need 'amp' to be set")
+        return self

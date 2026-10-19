@@ -27,6 +27,9 @@ from vacuum_manager import DEFAULT_MIN_BATTERY, UNAVAILABLE_STATES, VacuumContro
 ALARM_STATES = ('on', 'open', 'opening')
 ALARM_NOTIFICATION_PAUSE = 600  # seconds between alarm notifications
 UNLOCK_ALARM_PAUSE = 20  # seconds without alarm notifications after a door unlock while nobody is home
+UNLOCK_USER_WAIT = 2  # seconds to wait for the lock to report who unlocked it
+UNLOCK_USER_WINDOW = 10  # seconds after an unlock in which a changed user is still that unlock
+OWN_UNLOCK_WINDOW = 15  # seconds after the app's own UNLOCK in which an unlock is the app's
 LOCK_DELAY = 10  # seconds from enabling auto relock until the door is locked
 UNLOCK_DELAY = 3  # seconds from disabling auto relock until the door is unlocked
 SNAPSHOT_WRITE_DELAY = 2  # seconds. Home Assistant writes the snapshot file after the service call
@@ -277,6 +280,10 @@ class ModeManagement(ad.ADBase):
         self.mqtt:Optional[Any] = None
         self._lock_timer = None
         self._unlock_timer = None
+        # Per door topic: locked, last_unlock_user, last_unlock_source, unlocked_at
+        self._door_state:Dict[str, Dict[str, Any]] = {}
+        self._unlock_notify_timers:Dict[str, Any] = {}
+        self._own_unlock_at:Optional[datetime.datetime] = None
         if self.mqtt_door_lock:
             self.mqtt = self.get_plugin_api("MQTT")
             if self.mqtt is None:
@@ -733,11 +740,21 @@ class ModeManagement(ad.ADBase):
     def _unlock_door(self, **kwargs) -> None:
         """ Unlocks the MQTT doors. Timer callback from _set_auto_relock(False). """
         self._unlock_timer = None
+        self._own_unlock_at = self.ADapi.get_now()
         self._publish_to_doors("/set", "UNLOCK")
 
     def _mqtt_doorlock_event(self, event_name, data, **kwargs) -> None:
-        """ Listens to MQTT door events. An unlock by a known lock_user notifies, and a
-            housekeeper unlocking in away mode starts wash mode.
+        """ Listens to MQTT door messages. Zigbee2MQTT publishes the whole cached device
+            state on every attribute report, and the lock reports its state and its
+            last_unlock_* fields separately. So the app keeps the last known state per
+            door and reacts to changes only:
+            - LOCK -> UNLOCK: pauses the alarm if nobody is home and waits
+              UNLOCK_USER_WAIT seconds for the lock to report who unlocked.
+            - last_unlock_user or last_unlock_source changing while the door is unlocked
+              (within UNLOCK_USER_WINDOW seconds): notifies at once with that user.
+            - Otherwise, when the wait ends, notifies with the user the lock has reported
+              (unlocks with last_unlock_source 'self' are not notified).
+            The first message after a start only stores the state.
         """
         try:
             payload = json.loads(data['payload'])
@@ -746,35 +763,90 @@ class ModeManagement(ad.ADBase):
             return
         if not isinstance(payload, dict):
             return
-        if (
-            payload.get('state') == 'UNLOCK'
-            and payload.get('last_unlock_source') != 'self'
+        state = payload.get('state')
+        if state not in ('LOCK', 'UNLOCK'):
+            return
+        topic = str(data.get('topic', ''))
+        locked:bool = state == 'LOCK'
+        user = payload.get('last_unlock_user', None)
+        user = None if user is None else str(user)
+        source = payload.get('last_unlock_source', None)
+
+        prev = self._door_state.get(topic)
+        self._door_state[topic] = {
+            'locked': locked,
+            'user': user,
+            'source': source,
+            'unlocked_at': prev['unlocked_at'] if prev else None
+        }
+        if prev is None:
+            return  # First message (possibly retained): nothing has changed yet
+
+        if locked:
+            self._cancel_timer(self._unlock_notify_timers.pop(topic, None))
+            return
+
+        now = self.ADapi.get_now()
+        if prev['locked']:
+            self._door_state[topic]['unlocked_at'] = now
+            self._door_unlocked(topic)
+        elif (
+            (user != prev['user'] or source != prev['source'])
+            and prev['unlocked_at'] is not None
+            and (now - prev['unlocked_at']).total_seconds() <= UNLOCK_USER_WINDOW
         ):
-            unlock_user = payload.get('last_unlock_user', None)
+            self._cancel_timer(self._unlock_notify_timers.pop(topic, None))
+            self._notify_unlock(user)
 
-            for person in self.presence:
+    def _door_unlocked(self, topic:str) -> None:
+        """ A door went from locked to unlocked. Ignores the unlock the app sent itself. """
+        now = self.ADapi.get_now()
+        if (
+            self._own_unlock_at is not None
+            and (now - self._own_unlock_at).total_seconds() <= OWN_UNLOCK_WINDOW
+        ):
+            return
+        # Someone opened the door while the alarm is armed: give them a moment
+        # before the sensors notify. A longer pause already running is kept.
+        if not self._anyone_at_main_house_home():
+            self._pause_alarm_notification(UNLOCK_ALARM_PAUSE)
+        self._cancel_timer(self._unlock_notify_timers.get(topic))
+        self._unlock_notify_timers[topic] = self.ADapi.run_in(
+            self._unlock_wait_over, UNLOCK_USER_WAIT, topic = topic
+        )
+
+    def _unlock_wait_over(self, **kwargs) -> None:
+        """ The lock did not report a new user in time: use what it has reported. """
+        topic = kwargs.get('topic', '')
+        self._unlock_notify_timers.pop(topic, None)
+        door = self._door_state.get(topic)
+        if door is None or door['locked'] or door['source'] == 'self':
+            return
+        self._notify_unlock(door['user'])
+
+    def _notify_unlock(self, unlock_user:Optional[str]) -> None:
+        """ Notifies that the person with this lock_user unlocked the door, and a
+            housekeeper unlocking in away mode starts wash mode.
+        """
+        if unlock_user is None:
+            return
+        for person in self.presence:
+            if (
+                person.lock_user is not None
+                and str(unlock_user) == str(person.lock_user)
+            ):
                 if (
-                    person.lock_user is not None
-                    and unlock_user is not None
-                    and str(unlock_user) == str(person.lock_user)
+                    person.role == 'housekeeper'
+                    and self.current_mode == translations.away
                 ):
-                    if (
-                        person.role == 'housekeeper'
-                        and self.current_mode == translations.away
-                    ):
-                        self._set_mode(translations.wash)
-                    self._notify(
-                        message = f"{person.person_id} unlocked the door",
-                        message_title = "Door unlock",
-                        also_if_not_home = True,
-                        data = {'tag' : 'last_unlock_user'}
-                    )
-                    break
-
-            # Someone opened the door while the alarm is armed: give them a moment
-            # before the sensors notify. A longer pause already running is kept.
-            if not self._anyone_at_main_house_home():
-                self._pause_alarm_notification(UNLOCK_ALARM_PAUSE)
+                    self._set_mode(translations.wash)
+                self._notify(
+                    message = f"{person.person_id} unlocked the door",
+                    message_title = "Door unlock",
+                    also_if_not_home = True,
+                    data = {'tag' : 'last_unlock_user'}
+                )
+                break
 
     # ------------------------------------------------------------------
     # Vacation and presence

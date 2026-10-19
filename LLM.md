@@ -149,7 +149,7 @@ Do not decide these from names, rooms or defaults. Wait for the answer before wr
   - Only an adult or family arrival changes the door. A kid or housekeeper arriving never does, not even while an adult is home.
   - The `execute_night_at` and `execute_morning_at` fallbacks run the same night and morning actions as the sensors.
   - A person with `stopMorning` leaving during `morning` while an adult is still home only sets the normal mode.
-  - Unlocks reported with `last_unlock_source: self` are ignored.
+  - The door state is tracked per topic and only changes count: after LOCK to UNLOCK the app waits 2 s for `last_unlock_user`, notifies at once if user or source changes within 10 s, otherwise after the wait. Unlocks with source `self` and the app's own UNLOCK are not notified. Do not change this to notify on every `UNLOCK` message: Zigbee2MQTT repeats the cached state.
 - **Fire modes:**
   - `fire` is never stored as the mode, it only goes into `HALightModeText`.
   - `false-alarm` fires the stored mode again.

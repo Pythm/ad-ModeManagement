@@ -166,7 +166,7 @@ The time fallbacks (`execute_night_at`, `execute_morning_at`) run the same actio
 
 The MQTT plugin must be named `MQTT` in `appdaemon.yaml`, and `MQTT_namespace` must be its namespace, otherwise the door lock is disabled with a warning. For each topic the app listens to `<topic>` (JSON with `state`, `last_unlock_source`, `last_unlock_user`, as Zigbee2MQTT sends for Nimly locks) and publishes `true`/`false` to `<topic>/set/auto_relock` and `LOCK`/`UNLOCK` to `<topic>/set`.
 
-When the door is unlocked by a person with a `lock_user`, you get a notification. An unlock while nobody from the house is home pauses alarm notifications and alarm media for 20 seconds, so you have time to come in. A longer pause that is already running is kept. Unlocks the lock reports with `last_unlock_source: self` are ignored.
+The app remembers the last reported state of each door and reacts to changes only. When the door goes from locked to unlocked it waits 2 seconds for the lock to report who unlocked it (the lock reports its state and `last_unlock_user` separately). If `last_unlock_user` or `last_unlock_source` changes within 10 seconds after the unlock, you are notified at once with that user. Otherwise you are notified after the 2 seconds with the user the lock has reported. The notification is sent for a person with a matching `lock_user`, once per unlock. Unlocks with `last_unlock_source: self` and the unlock the app sends itself (`unlock_door_when_home`) are not notified. The first message after a start only stores the state. An unlock while nobody from the house is home pauses alarm notifications and alarm media for 20 seconds, so you have time to come in. A longer pause that is already running is kept.
 
 ```yaml
   MQTT_door_lock:

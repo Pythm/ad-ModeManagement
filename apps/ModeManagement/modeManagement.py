@@ -88,6 +88,9 @@ class ModeManagement(ad.ADBase):
 
         # Setting data
         self.current_mode:str = self._initial_mode()
+        # True from the night until the door has been unlocked in the morning. Set from
+        # the stored mode too, so a restart during the night still unlocks in the morning
+        self._morning_unlock_pending:bool = self.current_mode.startswith(translations.night)
         if self.current_mode == translations.away:
             self.start_alarm()
 
@@ -515,21 +518,34 @@ class ModeManagement(ad.ADBase):
             and self.ADapi.now_is_between(self.morning_runtime, self.execute_morning)
             and modename in (translations.automagical, translations.morning, self.family_mode)
         ):
-            self._morning_actions()
+            if self.morning_sensors:
+                # With morning sensors the first sensor unlocks the door (_waking_up), so a
+                # button in a bedroom or a phone can wake the house without opening the door.
+                # The sensors keep listening for that unlock
+                self.ADapi.log(f"{self.name}: {mode} after night. Morning items on, the door waits for a morning sensor") ###
+                self._turn_on_morning_items()
+            else:
+                self.ADapi.log(f"{self.name}: {mode} after night. Morning actions incl. door unlock") ###
+                self._morning_actions()
 
         ## Transition to main "Night" mode ##
-        if (
-            roomname is None
-            and modename.startswith(translations.night)
-            and self.ADapi.now_is_between(self.night_runtime, self.execute_night)
-        ):
-            self._night_actions()
+        if roomname is None and modename.startswith(translations.night):
+            if self.ADapi.now_is_between(self.night_runtime, self.execute_night):
+                self._night_actions()
+            elif self.ADapi.now_is_between(self.night_runtime, self.morning_runtime):
+                # After execute_night_at a night mode still locks the door (never unlocks),
+                # until the morning sensors start listening. turn_off_at_night is not
+                # repeated: a night light mode going back to night must not turn it off again
+                self.ADapi.log(f"{self.name}: door: lock, {mode} after {self.execute_night}") ###
+                self._set_auto_relock(True)
 
         ## Main "Away" mode ##
         # The full mode, not modename: a room mode like away_kitchen must not arm the house
         if mode == translations.away:
             self.start_alarm()
+            self._morning_unlock_pending = False
 
+            self.ADapi.log(f"{self.name}: door: lock, mode is away") ###
             self._set_auto_relock(True)
 
         ## False alarm from your fire detection app ##
@@ -552,6 +568,8 @@ class ModeManagement(ad.ADBase):
                 self.current_mode = translations.automagical
             else:
                 self.current_mode = modename
+            if self.current_mode.startswith(translations.night):
+                self._morning_unlock_pending = True
 
             # Update input_text do display in GUI
             self._write_mode_text(self.current_mode)
@@ -570,17 +588,24 @@ class ModeManagement(ad.ADBase):
         """ What happens when the house goes from night to morning or normal: the
             turn_on_in_the_morning items go on, the morning sensors stop listening and
             the door unlocks (only with unlock_door_when_home).
+            Used by the execute_morning_at fallback, and by mode events when no
+            morning_sensors are configured.
             Idempotent: items already on are skipped and _set_auto_relock restarts
             the pending unlock instead of stacking a second one.
         """
+        self._turn_on_morning_items()
+        self._cancel_listening_for_morning()
+        self._morning_unlock_pending = False
+        self._set_auto_relock(False)
+
+    def _turn_on_morning_items(self) -> None:
+        """ Turns on the turn_on_in_the_morning items that are exactly off. """
         for item in self.turn_on_in_the_morning:
             if self.ADapi.get_state(item, namespace = self.HASS_namespace) == 'off':
                 self.ADapi.call_service('homeassistant/turn_on',
                     entity_id = item,
                     namespace = self.HASS_namespace
                 )
-        self._cancel_listening_for_morning()
-        self._set_auto_relock(False)
 
     def _night_actions(self) -> None:
         """ What happens when the house goes to night: the turn_off_at_night items go
@@ -595,6 +620,7 @@ class ModeManagement(ad.ADBase):
                     namespace = self.HASS_namespace
                 )
         self._cancel_listening_for_night()
+        self.ADapi.log(f"{self.name}: door: lock, night actions") ###
         self._set_auto_relock(True)
 
     def _cancel_listening_for_morning(self) -> None:
@@ -641,16 +667,36 @@ class ModeManagement(ad.ADBase):
         if self.current_mode == translations.morning:
             self._fire_mode(self._normal_mode())
 
-    def _waking_up(self, entity, attribute, old, new, **kwargs) -> None:
-        """ Reacts to morning sensors. Morning on workdays before morning_to_day, else normal. """
+    def wake_mode(self) -> str:
+        """ The mode for a house that wakes up now: morning on workdays until
+            morning_to_normal, else the normal mode (automagical or the family mode).
+            Public: wall switch apps call it through get_app, so a button in a bedroom
+            sets the same mode as the morning sensors. See LLM_CONTROLLERS.md.
+        """
         if (
-            self.ADapi.now_is_between(self.morning_runtime, self.morning_to_day)
+            self.ADapi.now_is_between(self.execute_night, self.morning_to_day)
             and not self._is_holiday()
         ):
-            self._fire_mode(translations.morning)
-        else:
-            self._fire_mode(self._normal_mode())
+            return translations.morning
+        return self._normal_mode()
+
+    def _waking_up(self, entity, attribute, old, new, **kwargs) -> None:
+        """ Reacts to the first morning sensor. Sets the wake mode while the house is
+            still in night (or another mode), but keeps morning or normal that a
+            button or phone has set already. Unlocks the door when the house was in
+            night since the last morning unlock (only with unlock_door_when_home).
+        """
         self._cancel_listening_for_morning()
+        if self.current_mode == translations.away:
+            self.ADapi.log(f"{self.name}: morning sensor {entity} while away. Nothing done") ###
+            return
+        if self.current_mode not in (translations.morning, translations.automagical, self.family_mode):
+            self._fire_mode(self.wake_mode())
+        if not self._morning_unlock_pending: self.ADapi.log(f"{self.name}: morning sensor {entity}: no unlock, the house has not been in night since the last unlock") ###
+        if self._morning_unlock_pending:
+            self.ADapi.log(f"{self.name}: door: unlock, morning sensor {entity} (mode {self.current_mode})") ###
+            self._morning_unlock_pending = False
+            self._set_auto_relock(False)
 
     def _going_to_bed(self, entity, attribute, old, new, **kwargs) -> None:
         """ Reacts to night sensors. Not in away mode. """
@@ -664,11 +710,14 @@ class ModeManagement(ad.ADBase):
             self._fire_mode(self._normal_mode())
             # The echo from Home Assistant lands after execute_morning_at, so the window
             # check in _mode_event skips the actions at the exact boundary. Run them here
+            self.ADapi.log(f"{self.name}: {self.execute_morning} fallback: still night, morning actions incl. door unlock") ###
             self._morning_actions()
         elif self.current_mode == translations.morning:
             # Morning already ran the actions when it started
             self._fire_mode(self._normal_mode())
         self._cancel_listening_for_morning()
+        # The morning is over. A door still waiting for a sensor stays as it is
+        self._morning_unlock_pending = False
 
     def _good_night_now(self, **kwargs) -> None:
         """ Change to night at the given time.
@@ -726,21 +775,26 @@ class ModeManagement(ad.ADBase):
             self._lock_timer = None
             self._cancel_timer(self._unlock_timer) # Restart instead of stacking timers
 
+        self.ADapi.log(f"{self.name}: door: auto relock {'on' if enable else 'off'}") ###
         self._publish_to_doors("/set/auto_relock", "true" if enable else "false")
         if enable:
             self._lock_timer = self.ADapi.run_in(self._lock_door, LOCK_DELAY)
         else:
+            # Any unlock by the app is also this morning's unlock
+            self._morning_unlock_pending = False
             self._unlock_timer = self.ADapi.run_in(self._unlock_door, UNLOCK_DELAY)
 
     def _lock_door(self, **kwargs) -> None:
         """ Locks the MQTT doors. Timer callback from _set_auto_relock(True). """
         self._lock_timer = None
+        self.ADapi.log(f"{self.name}: door: LOCK sent") ###
         self._publish_to_doors("/set", "LOCK")
 
     def _unlock_door(self, **kwargs) -> None:
         """ Unlocks the MQTT doors. Timer callback from _set_auto_relock(False). """
         self._unlock_timer = None
         self._own_unlock_at = self.ADapi.get_now()
+        self.ADapi.log(f"{self.name}: door: UNLOCK sent") ###
         self._publish_to_doors("/set", "UNLOCK")
 
     def _mqtt_doorlock_event(self, event_name, data, **kwargs) -> None:
@@ -934,6 +988,7 @@ class ModeManagement(ad.ADBase):
                 person.role in ADULT_ROLES
                 and self.current_mode not in (translations.away, translations.night)
             ):
+                self.ADapi.log(f"{self.name}: door: unlock, {person.person_id} arrived (mode {self.current_mode})") ###
                 self._set_auto_relock(False)
 
         elif person.role == 'housekeeper':
@@ -983,6 +1038,7 @@ class ModeManagement(ad.ADBase):
         if self._any_adult_home():
             return # Someone is still home
 
+        self.ADapi.log(f"{self.name}: door: lock, no adult home after {person.person_id} left") ###
         self._set_auto_relock(True)
 
         if (

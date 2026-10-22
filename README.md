@@ -2,7 +2,7 @@
 # ModeManagement by Pythm  
 **An example of automating modes with AppDaemon to set suitable lights using the [Lightwand](https://github.com/Pythm/ad-Lightwand) AppDaemon app and automate other entities and appliances based on presence.**
 
-> 🤖 **Set up with an AI assistant:** the [LLM guide](https://github.com/Pythm/Pythm_AppdaemonApps/blob/master/LLM_GUIDE.md) helps an AI assistant find your own entity ids in Home Assistant and write the configuration. This app's own notes for the assistant are in [LLM.md](LLM.md).
+> 🤖 **Set up with an AI assistant:** the [LLM guide](https://github.com/Pythm/Pythm_AppdaemonApps/blob/master/LLM_GUIDE.md) helps an AI assistant find your own entity ids in Home Assistant and write the configuration. This app's own notes for the assistant are in [LLM.md](LLM.md), and [LLM_CONTROLLERS.md](LLM_CONTROLLERS.md) explains how to program wall switches and remotes that move the house through the day.
 
 ---
 
@@ -30,6 +30,11 @@ Nothing to do for most setups. Your YAML keeps working.
 - **Times**: Unquoted times in YAML (`22:00:00`) are accepted.
 - **`alarm_media`**: A bad entry (no `player` or `playlist`, or `source`/`volume`/`normal_volume` without `amp`) is now logged as an ERROR at startup and skipped, instead of failing during an alarm.
 - **Stand-alone `VacuumManager`**: also accepts `vacuum_min_battery` as a fallback for `min_battery`.
+- **Morning door unlock with `morning_sensors`**: The first morning sensor now unlocks the door (with `unlock_door_when_home`) when the house has been in night since the last unlock, also if a button, a phone or another app has already set `morning` or normal. A `morning` or normal mode event no longer unlocks the door when `morning_sensors` are set, so a button in a bedroom can wake the house without opening the door. Without `morning_sensors` a mode event unlocks as before. Before, any mode that reached the app ahead of the sensor (also a name the app did not know) made it skip the morning unlock for the whole day.
+- **Morning sensor keeps a mode that is already set**: The first morning sensor sets `morning` or normal only while the house is still in night (or another mode than `morning`/normal). A `morning` or normal mode set by a button is kept. In `away` it does nothing. Before, it set `morning` also over normal and in `away`.
+- **New, public: `wake_mode()`**: returns the mode the morning sensor would set now, for wall switch apps (see [Used by other apps](#-used-by-other-apps)).
+- **Night mode locks the door all night**: A night mode (`night` or a `night*` variant for the whole house) now locks the door from `night_start_listen_time` until `morning_start_listen_time`. Before, only until `execute_night_at`. After `execute_night_at` it only locks (auto relock on, then LOCK); `turn_off_at_night` is not repeated. A night mode never unlocks the door.
+  - **Upgrading**: Nothing to do. Check your own wall switch or remote apps: they must fire the translated mode names (see [LLM_CONTROLLERS.md](LLM_CONTROLLERS.md)).
 
 ### **0.3.1**
 Nothing to do if you only use the defaults, except the door lock behaviour below. Your YAML keeps working.
@@ -158,11 +163,18 @@ Set `family` to a light mode name to use it instead of `automagical` while a per
 The door is locked (auto relock is enabled, and the lock command follows about 10 seconds later) when:
 - the last adult or family member leaves, also if kids are still home (including a person with `stopMorning` leaving during `morning`),
 - the mode changes to `away`,
-- the mode changes to `night` between `night_start_listen_time` and `execute_night_at`.
+- the mode changes to `night` (or a whole-house `night*` variant) between `night_start_listen_time` and `morning_start_listen_time`. Until `execute_night_at` this runs all night actions (also `turn_off_at_night`), after it only the lock.
 
-The door is **not** unlocked automatically, and auto relock is left as the lock has it. `unlock_door_when_home: True` turns on both parts: when an adult or family member arrives home (also home from `away`, but not in `night` mode) the app disables auto relock and unlocks the door about 3 seconds later, and the same happens when morning starts after the night. Auto relock is enabled again at the next lock. A kid or housekeeper arriving, also while an adult is home, never changes the door.
+The door is **not** unlocked automatically, and auto relock is left as the lock has it. `unlock_door_when_home: True` turns on both parts: the app disables auto relock and unlocks the door about 3 seconds later
+- when an adult or family member arrives home (also home from `away`, but not in `night` mode),
+- in the morning after the night: with `morning_sensors`, when the first of them turns `on`. It unlocks if the house has been in night since the last unlock, also when a button, a phone or another app has already set `morning` or normal. Such a mode event does not unlock the door by itself, so a button in a bedroom can wake the house without opening it. Without `morning_sensors`, a `morning` or normal mode event after night unlocks the door,
+- at `execute_morning_at` if the house is still in night.
+
+Auto relock is enabled again at the next lock. A kid or housekeeper arriving, also while an adult is home, never changes the door.
 
 The time fallbacks (`execute_night_at`, `execute_morning_at`) run the same actions as the sensors: at night `turn_off_at_night` and the lock, in the morning `turn_on_in_the_morning` and the (opt-in) unlock.
+
+> **Coming home from `away` during the night:** an adult or family member arriving between `execute_night_at` and `morning_start_listen_time` sets the normal mode and, with `unlock_door_when_home`, unlocks the door and turns auto relock off. Nothing locks it again until someone leaves or the next night, and the morning routine does not run because the house was never in night. Set `night` yourself (a bedroom button or the light mode selector): it locks the door again (auto relock on, then LOCK) and the morning sensor unlocks it as usual. Setting `night` never unlocks the door.
 
 The MQTT plugin must be named `MQTT` in `appdaemon.yaml`, and `MQTT_namespace` must be its namespace, otherwise the door lock is disabled with a warning. For each topic the app listens to `<topic>` (JSON with `state`, `last_unlock_source`, `last_unlock_user`, as Zigbee2MQTT sends for Nimly locks) and publishes `true`/`false` to `<topic>/set/auto_relock` and `LOCK`/`UNLOCK` to `<topic>/set`.
 
@@ -303,14 +315,16 @@ After a restart the mode stored in `HALightModeText` is used as it is, including
 - Fires `MODE_CHANGE` with `mode: <name>` in `HASS_namespace`. The event name and the mode names come from Lightwand's translations (English: `automagical`, `morning`, `night`, `away`, `wash`), plus your `family` mode name if set. After `false-alarm` it fires the stored mode again, whatever it is.
 - Listens to the same event, also from Lightwand or your own automations, to keep track of the current mode:
   - `away` starts the alarm and locks the door.
-  - `night` between `night_start_listen_time` and `execute_night_at` turns off `turn_off_at_night` and locks the door.
-  - `automagical`, `morning` or the `family` mode while in night mode, between `morning_start_listen_time` and `execute_morning_at`, turns on `turn_on_in_the_morning` (and unlocks the door with `unlock_door_when_home`).
+  - `night` (or a whole-house `night*` variant) between `night_start_listen_time` and `execute_night_at` turns off `turn_off_at_night` and locks the door. From `execute_night_at` until `morning_start_listen_time` it only locks the door.
+  - `automagical`, `morning` or the `family` mode while in night mode, between `morning_start_listen_time` and `execute_morning_at`, turns on `turn_on_in_the_morning`. With `unlock_door_when_home` it also unlocks the door, but only when no `morning_sensors` are set. With sensors the first sensor unlocks it (see [MQTT Door locks](#mqtt-door-locks)).
   - `reset` stores `automagical`. `false-alarm` fires the mode from before the fire again. `fire` only shows `fire` in `HALightModeText`.
   - Room modes like `off_kitchen` do not change the stored mode.
 - With `vacuum_event` set, fires that event with `action: start` or `action: stop`.
 
 ### 🔗 Used by other apps
 `anyone_home()` is a public method. It returns `True` if any person in `presence` is home and not marked as outside, whatever the role (also tenants and housekeepers). FireAlarm from [Pythm_AppdaemonApps](https://github.com/Pythm/Pythm_AppdaemonApps) uses it and finds this app by the app name you set in its `modeManagementApp` option.
+
+`wake_mode()` is a public method for wall switch and remote apps. It returns the mode for a house that wakes up now: `morning` on workdays until `morning_to_normal`, otherwise the normal mode (`automagical`, or the `family` mode when it applies; weekends and holidays with `country_code`). Read the house mode from the `current_mode` attribute. See [LLM_CONTROLLERS.md](LLM_CONTROLLERS.md).
 
 ---
 
@@ -344,7 +358,7 @@ After a restart the mode stored in `HALightModeText` is used as it is, including
 ### **Mode Triggers**  
 | Key                  | Type       | Default        | Description                                                                 |
 |----------------------|------------|----------------|-----------------------------------------------------------------------------|
-| `morning_sensors`    | list       | (optional)     | The first of these that turns `on` after `morning_start_listen_time` sets morning mode (normal mode after `morning_to_normal`, and on weekends and holidays when `country_code` is set). Not started while the mode is `away`. |
+| `morning_sensors`    | list       | (optional)     | The first of these that turns `on` after `morning_start_listen_time` sets morning mode (normal mode after `morning_to_normal`, and on weekends and holidays when `country_code` is set), unless a button or another app has already set morning or normal. With `unlock_door_when_home` it also unlocks the door after the night. Not started while the mode is `away`, and does nothing if the mode has changed to `away` since. |
 | `night_sensors`      | list       | (optional)     | Sensors turning `on` after `night_start_listen_time` set night mode (not in away mode). |
 
 ### **Presence Tracking**  

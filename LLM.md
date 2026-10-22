@@ -1,6 +1,6 @@
 # ad-ModeManagement: notes for an AI assistant
 
-Read this with [README.md](README.md). The workflow for finding the user's real entity ids (token, `ha_snapshot.py`, asking when several match) is in the [Pythm_AppdaemonApps LLM guide](https://github.com/Pythm/Pythm_AppdaemonApps/blob/master/LLM_GUIDE.md). Follow its rules: ids from the index only, ask when several match, one app per `apps.yaml` edit, back up first, no commit or push unasked.
+Read this with [README.md](README.md). For wall switches and remotes that move the house through the day, see [LLM_CONTROLLERS.md](LLM_CONTROLLERS.md). The workflow for finding the user's real entity ids (token, `ha_snapshot.py`, asking when several match) is in the [Pythm_AppdaemonApps LLM guide](https://github.com/Pythm/Pythm_AppdaemonApps/blob/master/LLM_GUIDE.md). Follow its rules: ids from the index only, ask when several match, one app per `apps.yaml` edit, back up first, no commit or push unasked.
 
 ## What the app does
 
@@ -118,7 +118,7 @@ Do not decide these from names, rooms or defaults. Wait for the answer before wr
 - **Lock user slots:** which person has which `lock_user` number in the door lock. A wrong number sends wrong notifications, and for a housekeeper it can set `wash` mode.
 - **Outside switches:** what each switch means to them (for example "I am in the garden"). While it is on, that person counts as away: the door locks, vacuums may start, and away may be set.
 - **Notifications:** who gets them, and whether `notify_mobiles` is used (it changes what `notify_receiver` must contain).
-- **Door unlock:** should the door unlock by itself when people come home (`unlock_door_when_home`, default off)? Explain that it controls both parts: disabling auto relock and sending UNLOCK, when an adult or family member arrives (also from `away`, not in `night`) and in the morning after night mode. Kids and housekeepers never change the door. Without it the door only locks.
+- **Door unlock:** should the door unlock by itself when people come home (`unlock_door_when_home`, default off)? Explain that it controls both parts: disabling auto relock and sending UNLOCK, when an adult or family member arrives (also from `away`, not in `night`) and in the morning after night mode (with `morning_sensors`: when the first sensor turns on, not when a button sets the mode). Kids and housekeepers never change the door. Without it the door only locks.
 - **Vacuums:** may they start by themselves when the adults leave, also when only kids are home? Which window (`vacuum_earliest_start` to `vacuum_latest_start`)? Anything that must block them (`prevent_vacuum`)?
 - **Morning and night sensors:** which sensors mean "the house is waking up" or "going to bed"? The first one that turns `on` sets the mode for the **whole house**. Two sensors of one kind: is the second a backup for the first, or in another room (for example a kid's room that should not wake the house)? Only put sensors here that should change the house mode.
 - **Alarm sensors:** which sensors should notify while nobody is home, which camera belongs to each, and whether loud `alarm_media` should play for each one (`play_media: false` for outdoor sensors, for example).
@@ -148,6 +148,11 @@ Do not decide these from names, rooms or defaults. Wait for the answer before wr
   - Locks about 10 seconds after auto relock is enabled. Unlocks about 3 seconds after it is disabled, and only with `unlock_door_when_home`. That option gates both the unlock and disabling auto relock.
   - Only an adult or family arrival changes the door. A kid or housekeeper arriving never does, not even while an adult is home.
   - The `execute_night_at` and `execute_morning_at` fallbacks run the same night and morning actions as the sensors.
+  - A whole-house night mode locks the door from `night_start_listen_time` until `morning_start_listen_time` (owner decision). After `execute_night_at` it only locks: `turn_off_at_night` is not repeated, so a night light mode going back to night does not turn things off again. A night mode never unlocks.
+  - Morning unlock: with `morning_sensors`, only the first morning sensor unlocks (if the house has been in night since the last unlock), also after a button or phone has set `morning` or normal. A mode event does not unlock then. Without `morning_sensors`, a `morning` or normal event after night unlocks. Do not move the unlock back to the mode event: a bedroom button must not open the door.
+  - The first morning sensor keeps a `morning` or normal mode that is already set, and does nothing in `away`.
+  - Arrival from `away` between `execute_night_at` and `morning_start_listen_time` sets the normal mode and unlocks. This is intended (owner decision); the README tells the user to set `night` by hand, which locks the door again.
+  - A night variant (`night<Room>`) does not block the unlock on arrival, only plain `night` and `away` do. Intended.
   - A person with `stopMorning` leaving during `morning` while an adult is still home only sets the normal mode.
   - The door state is tracked per topic and only changes count: after LOCK to UNLOCK the app waits 2 s for `last_unlock_user`, notifies at once if user or source changes within 10 s, otherwise after the wait. Unlocks with source `self` and the app's own UNLOCK are not notified. Do not change this to notify on every `UNLOCK` message: Zigbee2MQTT repeats the cached state.
 - **Fire modes:**
@@ -164,6 +169,7 @@ Do not decide these from names, rooms or defaults. Wait for the answer before wr
 
 - `MODE_CHANGE` (name from the translations) on `HASS_namespace`, data `mode`. Fired by this app. It also listens to the same event from Lightwand, FireAlarm, Siri shortcuts and the user's automations.
 - `vacuum_event` (usually `VACUUM_CONTROL`) with `action: start` or `stop`. Fired only when `vacuum_event` is set. `VacuumManager` listens to it, and HA automations may fire it too.
+- `wake_mode()` (public): the mode for a house that wakes up now (`morning` on workdays until `morning_to_normal`, else the normal mode). Wall switch apps call it through `get_app`, together with the `current_mode` attribute. See [LLM_CONTROLLERS.md](LLM_CONTROLLERS.md). Do not rename either.
 - `anyone_home()` (public): `True` if any person in `presence`, whatever the role, is home and not marked outside. FireAlarm (Pythm_AppdaemonApps) calls it through `get_app(<modeManagementApp>)`. Do not rename or remove it, and keep the app name matching FireAlarm's `modeManagementApp`.
 - `HALightModeText` is written with the current mode. Dashboards may read it.
 

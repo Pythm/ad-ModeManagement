@@ -793,6 +793,14 @@ class ModeManagement(ad.ADBase):
     def _unlock_door(self, **kwargs) -> None:
         """ Unlocks the MQTT doors. Timer callback from _set_auto_relock(False). """
         self._unlock_timer = None
+        # Already unlocked (auto relock is off, so it stays that way): nothing to send.
+        # An unknown state (no message yet since start) still sends
+        if all(
+            self._door_state.get(str(door), {}).get('locked') is False
+            for door in self.mqtt_door_lock
+        ):
+            self.ADapi.log(f"{self.name}: door: already unlocked, UNLOCK skipped") ###
+            return
         self._own_unlock_at = self.ADapi.get_now()
         self.ADapi.log(f"{self.name}: door: UNLOCK sent") ###
         self._publish_to_doors("/set", "UNLOCK")

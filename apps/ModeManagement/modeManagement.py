@@ -858,15 +858,21 @@ class ModeManagement(ad.ADBase):
             and (now - prev['unlocked_at']).total_seconds() <= UNLOCK_USER_WINDOW
         ):
             self._cancel_timer(self._unlock_notify_timers.pop(topic, None))
-            self._notify_unlock(user)
+            if not self._is_own_unlock():
+                self._notify_unlock(user)
+
+    def _is_own_unlock(self) -> bool:
+        """ True within OWN_UNLOCK_WINDOW seconds after the app sent UNLOCK itself. The lock reports
+            the new state and then who unlocked it in separate messages, so every notify path checks this.
+        """
+        return (
+            self._own_unlock_at is not None
+            and (self.ADapi.get_now() - self._own_unlock_at).total_seconds() <= OWN_UNLOCK_WINDOW
+        )
 
     def _door_unlocked(self, topic:str) -> None:
         """ A door went from locked to unlocked. Ignores the unlock the app sent itself. """
-        now = self.ADapi.get_now()
-        if (
-            self._own_unlock_at is not None
-            and (now - self._own_unlock_at).total_seconds() <= OWN_UNLOCK_WINDOW
-        ):
+        if self._is_own_unlock():
             return
         # Someone opened the door while the alarm is armed: give them a moment
         # before the sensors notify. A longer pause already running is kept.
@@ -882,7 +888,7 @@ class ModeManagement(ad.ADBase):
         topic = kwargs.get('topic', '')
         self._unlock_notify_timers.pop(topic, None)
         door = self._door_state.get(topic)
-        if door is None or door['locked'] or door['source'] == 'self':
+        if door is None or door['locked'] or door['source'] == 'self' or self._is_own_unlock():
             return
         self._notify_unlock(door['user'])
 

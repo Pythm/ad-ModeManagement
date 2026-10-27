@@ -69,7 +69,7 @@ manageModes:                        # FireAlarm finds the app by this name (its 
       prevent_vacuum: [input_boolean.xxx]   # replaces the global list for this vacuum
   prevent_vacuum: [input_boolean.xxx]
   vacuum_min_battery: 40
-  vacuum_earliest_start: '06:00:00' # default: morning_start_listen_time
+  vacuum_earliest_start: '06:00:00' # default: morning_start_listen_time (also starts docked vacuums at this time if no adult is home)
   vacuum_latest_start: '18:00:00'
   vacuum_event: VACUUM_CONTROL      # only with a separate VacuumManager app
 ```

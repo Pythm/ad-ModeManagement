@@ -24,6 +24,7 @@ Nothing to do for most setups. Your YAML keeps working.
 - **Door on arrival**: Only an adult or family member arriving changes the door (with `unlock_door_when_home: True`, which gates both disabling auto relock and unlocking). A kid or housekeeper arriving, also while an adult is home, no longer re-sends an unlock. Before, any arrival except a tenant did.
 - **Time fallbacks**: At `execute_night_at` and `execute_morning_at` the app now also runs the same actions as the sensors: `turn_off_at_night` and the door lock at night, `turn_on_in_the_morning` and the (opt-in) unlock in the morning. Before, only a sensor or a mode event from outside did.
 - **`stopMorning`**: A person with `stopMorning` leaving during `morning` while only kids remain now locks the door, starts the away timer and starts the vacuums. Before, only the normal mode was set. With another adult home nothing changes.
+- **Vacuum at window start**: If the last adult left before `vacuum_earliest_start`, the vacuums are now started when the window opens, under the same rules as when the last adult leaves (no adult or family member home, `vacation` off, `keep_mode_when_outside` off, not kids asleep in night mode). Before, they were skipped until someone left again. Always on, nothing to configure. Check that `vacuum_earliest_start` is a time you want a robot to start, since a house that was empty overnight now gets cleaned then.
 - **Vacuum after vacation**: When the `vacation` switch is turned off, only an adult or family member at home blocks the vacuum start. Kids no longer do.
 - **Housekeeper**: A housekeeper arriving in `wash` mode stops the alarm sensors, as in `away`.
 - **Alarm pause**: Stopping the alarm resets both pause timers, so re-arming inside a running 10 minute pause starts clean.
@@ -115,7 +116,7 @@ pip install -r requirements.txt
 ---
 
 ## 📌 Tips & Best Practices  
-- **Vacation Mode**: While `vacation` is on, vacuums are not started. When it is turned off and nobody is home, the vacuums start once if the time is between `vacuum_earliest_start` and `vacuum_latest_start`. Outside that window they are not started. If AppDaemon starts with it on, the mode is `away`.
+- **Vacation Mode**: While `vacation` is on, vacuums are not started. When it is turned off and nobody is home, the vacuums start once if the time is between `vacuum_earliest_start` and `vacuum_latest_start`. Outside that window they are not started. If nobody is home when the window opens, they start at `vacuum_earliest_start`. If AppDaemon starts with it on, the mode is `away`.
 - **Holiday Detection**: Define `country_code` to fetch holidays. This will set normal automation instead of morning mode during holidays and weekends. If not defined, app will call morning mode every day.
 - **Light‑Mode Display** – Use a Home Assistant input_text helper configured with (`HALightModeText`) to show the current Light mode. It is also used at startup to restore the last mode, and it shows `fire` during a fire alarm.
 
@@ -199,6 +200,7 @@ You can automatically start and stop a vacuum cleaner when a person with the *ad
 | Feature | Description |
 |---------|-------------|
 | **Start when away** | Starts docked (`docked` or `charging`) vacuums when the last adult/family member has left, after `delay_before_setting_away`, between `vacuum_earliest_start` (default `morning_start_listen_time`) and `vacuum_latest_start` (default `18:00:00`). Not while `vacation` is on, not while `keep_mode_when_outside` is on, and not when kids are home at night in night mode. |
+| **Start when the window opens** | If nobody (adult or family) is home when `vacuum_earliest_start` is reached, docked vacuums start then, under the same conditions as above. This covers leaving before the window opens. |
 | **Start after vacation** | When the `vacation` switch is turned off (not when it comes back from `unavailable`/`unknown`) and no adult or family member is home, the vacuums start once if the time is inside the start window. Outside the window they are not started (logged at INFO level). |
 | **Return to base** | When an adult or family member arrives, every vacuum that is `cleaning` is sent back to its base. Exception: a vacuum the app found already cleaning when it tried to start it is treated as started by you and left alone until it docks. |
 | **Battery** | Vacuums start only when the battery is above `min_battery` (default 40 %). The `battery` sensor is read first, then the `battery_level` attribute of the vacuum. If no level can be read, a warning is logged once and the vacuum is started anyway. |

@@ -122,6 +122,7 @@ class ModeManagement(ad.ADBase):
         self.execute_night:str = self._time_arg('execute_night_at', '02:00:00')
         self.vacuum_earliest:str = self._time_arg('vacuum_earliest_start', self.morning_runtime)
         self.vacuum_latest:str = self._time_arg('vacuum_latest_start', '18:00:00')
+        self.ADapi.run_daily(self._vacuum_window_opened, self.vacuum_earliest)
 
     def _setup_vacation(self) -> None:
         """ Vacation switch from Home Assistant. Blocks the vacuums and means away at startup. """
@@ -437,6 +438,38 @@ class ModeManagement(ad.ADBase):
             not self.vacation
             and self.ADapi.now_is_between(self.vacuum_earliest, self.vacuum_latest)
         )
+
+    def _outside_mode_blocks_away(self) -> bool:
+        """ True while the keep_mode_when_outside switch is on. Away mode and vacuums wait. """
+        return (
+            self.keep_mode_when_outside is not None
+            and self.ADapi.get_state(self.keep_mode_when_outside, namespace = self.HASS_namespace) == 'on'
+        )
+
+    def _kids_asleep_at_night(self) -> bool:
+        """ True when kids are home in night mode inside the night window.
+            Night mode is kept and the vacuums are not started.
+        """
+        return (
+            self.current_mode.startswith(translations.night)
+            and self.ADapi.now_is_between(self.night_runtime, self.morning_runtime)
+            and self._count('kid') > 0
+        )
+
+    def _vacuum_window_opened(self, **kwargs) -> None:
+        """ Daily timer at vacuum_earliest_start. If the last adult left before the window
+            opened, _set_away_mode found it closed and started nothing, so start here.
+            Same rules as when the last adult leaves. start_vacuum skips vacuums that are
+            not docked, so a vacuum already cleaning is left alone.
+        """
+        if not self._in_vacuum_window():
+            return
+        if self._any_adult_home():
+            return
+        if self._outside_mode_blocks_away() or self._kids_asleep_at_night():
+            return
+        self.ADapi.log(f"{self.name}: Vacuum window opened and no adult is home. Starting vacuums.", level = 'INFO')
+        self.start_vacuum()
 
     def _timer_active(self, handle) -> bool:
         """ True if handle is a run_in timer that has not fired yet. Safe to call with None. """
@@ -1055,18 +1088,10 @@ class ModeManagement(ad.ADBase):
         self.ADapi.log(f"{self.name}: door: lock, no adult home after {person.person_id} left") ###
         self._set_auto_relock(True)
 
-        if (
-            self.keep_mode_when_outside is not None
-            and self.ADapi.get_state(self.keep_mode_when_outside, namespace = self.HASS_namespace) == 'on'
-        ):
+        if self._outside_mode_blocks_away():
             return
 
-        # Kids asleep at night: keep night mode and do not start vacuums
-        if (
-            self.current_mode.startswith(translations.night)
-            and self.ADapi.now_is_between(self.night_runtime, self.morning_runtime)
-            and self._count('kid') > 0
-        ):
+        if self._kids_asleep_at_night():
             return
 
         # Kids may still be home: the door locks and the vacuums may start, but away

@@ -61,6 +61,7 @@ manageModes:                        # FireAlarm finds the app by this name (its 
   snapshot_keep_days: 7
   MQTT_door_lock: [zigbee2mqtt/<lock name>]
   unlock_door_when_home: false
+  lock_verify_seconds: 30           # optional, 0 = no check that LOCK reached the lock
   vacuum:                           # use vacuum OR vacuum_event, never both
     - vacuum: vacuum.xxx            # REQUIRED (a plain entity id as list item also works)
       battery: sensor.xxx
@@ -146,6 +147,7 @@ Do not decide these from names, rooms or defaults. Wait for the answer before wr
   - A door unlock while nobody is home pauses both for 20 seconds and never shortens a longer pause.
 - **Door:**
   - Locks about 10 seconds after auto relock is enabled. Unlocks about 3 seconds after it is disabled, and only with `unlock_door_when_home`. UNLOCK is skipped when the lock has reported `UNLOCK` as its last state (auto relock off keeps it open); an unknown state still sends. That option gates both the unlock and disabling auto relock.
+  - After LOCK the app waits `lock_verify_seconds` (default 30) for the lock to report locked, resends LOCK once, then logs a WARNING and notifies "Door not locked". Doors with no state since start are skipped; UNLOCK is never checked; an app UNLOCK cancels a pending check.
   - Only an adult or family arrival changes the door. A kid or housekeeper arriving never does, not even while an adult is home.
   - The `execute_night_at` and `execute_morning_at` fallbacks run the same night and morning actions as the sensors.
   - A whole-house night mode locks the door from `night_start_listen_time` until `morning_start_listen_time` (owner decision). After `execute_night_at` it only locks: `turn_off_at_night` is not repeated, so a night light mode going back to night does not turn things off again. A night mode never unlocks.

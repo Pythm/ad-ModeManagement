@@ -201,4 +201,4 @@ Thumbs.db
 # VsCode
 /.vscode
 .vscode/
-apps/.vscode/
+apps/.vscode/.claude/

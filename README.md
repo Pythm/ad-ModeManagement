@@ -34,6 +34,7 @@ Nothing to do for most setups. Your YAML keeps working.
 - **Morning door unlock with `morning_sensors`**: The first morning sensor now unlocks the door (with `unlock_door_when_home`) when the house has been in night since the last unlock, also if a button, a phone or another app has already set `morning` or normal. A `morning` or normal mode event no longer unlocks the door when `morning_sensors` are set, so a button in a bedroom can wake the house without opening the door. Without `morning_sensors` a mode event unlocks as before. Before, any mode that reached the app ahead of the sensor (also a name the app did not know) made it skip the morning unlock for the whole day.
 - **Morning sensor keeps a mode that is already set**: The first morning sensor sets `morning` or normal only while the house is still in night (or another mode than `morning`/normal). A `morning` or normal mode set by a button is kept. In `away` it does nothing. Before, it set `morning` also over normal and in `away`.
 - **New, public: `wake_mode()`**: returns the mode the morning sensor would set now, for wall switch apps (see [Used by other apps](#-used-by-other-apps)).
+- **Lock check**: About 30 seconds after the app sends LOCK it checks that the lock has reported locked. If a door has not, LOCK is sent once more to that door. If it still has not locked 30 seconds later, you get a warning in the log and a notification ("Door not locked"). A door that has never reported a state is skipped, and a person who unlocks the door after it reported locked is left alone. UNLOCK is not checked. Set `lock_verify_seconds: 0` to turn it off (see [MQTT Door locks](#mqtt-door-locks)). Nothing to do for the default.
 - **Night mode locks the door all night**: A night mode (`night` or a `night*` variant for the whole house) now locks the door from `night_start_listen_time` until `morning_start_listen_time`. Before, only until `execute_night_at`. After `execute_night_at` it only locks (auto relock on, then LOCK); `turn_off_at_night` is not repeated. A night mode never unlocks the door.
   - **Upgrading**: Nothing to do. Check your own wall switch or remote apps: they must fire the translated mode names (see [LLM_CONTROLLERS.md](LLM_CONTROLLERS.md)).
 
@@ -171,6 +172,8 @@ The door is **not** unlocked automatically, and auto relock is left as the lock 
 - in the morning after the night: with `morning_sensors`, when the first of them turns `on`. It unlocks if the house has been in night since the last unlock, also when a button, a phone or another app has already set `morning` or normal. Such a mode event does not unlock the door by itself, so a button in a bedroom can wake the house without opening it. Without `morning_sensors`, a `morning` or normal mode event after night unlocks the door,
 - at `execute_morning_at` if the house is still in night.
 
+After every LOCK the app waits `lock_verify_seconds` (default 30) for the lock to report locked. If it has not, LOCK is sent once more to that door, and if it still has not locked after another `lock_verify_seconds` the app logs a WARNING and sends a "Door not locked" notification. Nothing more is sent after that. Doors that have not reported any state since the app started are skipped (a lock that is already locked may stay silent), and an unlock by a person after the lock reported locked does not trigger a new LOCK. An unlock sent by the app cancels a pending check. UNLOCK is not checked. `0` turns the check off.
+
 Auto relock is enabled again at the next lock. A kid or housekeeper arriving, also while an adult is home, never changes the door.
 
 The time fallbacks (`execute_night_at`, `execute_morning_at`) run the same actions as the sensors: at night `turn_off_at_night` and the lock, in the morning `turn_on_in_the_morning` and the (opt-in) unlock.
@@ -279,6 +282,7 @@ Messages sent:
 |-------|---------|------|
 | `Sensor triggered` | the sensor entity id | A sensor in `alarmsensors` is triggered while nobody is home. |
 | `Door unlock` | `<person entity id> unlocked the door` | The MQTT door is unlocked by a person with a matching `lock_user`. |
+| `Door not locked` | `The door did not lock: <topic>` | The lock has not reported locked after LOCK was sent twice (see [MQTT Door locks](#mqtt-door-locks)). |
 | `Housekeeping` | `Housekeeper <person entity id> entered` | A housekeeper arrives while nobody from the house is home. |
 
 ### 📷 Picture with the alarm notification
@@ -400,6 +404,7 @@ After a restart the mode stored in `HALightModeText` is used as it is, including
 | Key                  | Type       | Default        | Description                                                                 |
 |----------------------|------------|----------------|-----------------------------------------------------------------------------|
 | `MQTT_door_lock`     | list       | (optional)     | List of MQTT door lock topics that are locked when away and at night.       |
+| `lock_verify_seconds` | int       | `30`           | Seconds after LOCK until the app checks that the lock reported locked. LOCK is resent once, then a warning and a notification. `0` turns the check off. |
 | `unlock_door_when_home` | bool    | `False`        | Also disable auto relock and unlock the door when an adult/family member arrives (not in night mode) and in the morning. Kids and housekeepers never change the door. |
 
 ### **Alarm Sensors**  

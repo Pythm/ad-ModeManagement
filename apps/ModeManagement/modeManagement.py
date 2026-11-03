@@ -31,6 +31,7 @@ UNLOCK_USER_WAIT = 2  # seconds to wait for the lock to report who unlocked it
 UNLOCK_USER_WINDOW = 10  # seconds after an unlock in which a changed user is still that unlock
 OWN_UNLOCK_WINDOW = 15  # seconds after the app's own UNLOCK in which an unlock is the app's
 LOCK_DELAY = 10  # seconds from enabling auto relock until the door is locked
+DEFAULT_LOCK_VERIFY = 30  # seconds after LOCK until the app checks that the door reported locked
 UNLOCK_DELAY = 3  # seconds from disabling auto relock until the door is unlocked
 SNAPSHOT_WRITE_DELAY = 2  # seconds. Home Assistant writes the snapshot file after the service call
 MEDIA_START_DELAY = 8  # seconds. The amplifier needs time to switch source before playback
@@ -282,9 +283,14 @@ class ModeManagement(ad.ADBase):
         self.mqtt_door_lock:list = _as_list(self.args.get('MQTT_door_lock', []))
         self.unlock_door_when_home:bool = bool(self.args.get('unlock_door_when_home', False))
         self.mqtt:Optional[Any] = None
+        # Seconds to wait for the lock to report locked after LOCK. 0 turns the check off
+        self.lock_verify_seconds:int = int(self.args.get('lock_verify_seconds', DEFAULT_LOCK_VERIFY))
         self._lock_timer = None
         self._unlock_timer = None
-        # Per door topic: locked, last_unlock_user, last_unlock_source, unlocked_at
+        self._lock_verify_timer = None
+        self._lock_sent_at:Optional[datetime.datetime] = None
+        self._lock_retried:bool = False
+        # Per door topic: locked, last_unlock_user, last_unlock_source, unlocked_at, locked_at
         self._door_state:Dict[str, Dict[str, Any]] = {}
         self._unlock_notify_timers:Dict[str, Any] = {}
         self._own_unlock_at:Optional[datetime.datetime] = None
@@ -555,10 +561,8 @@ class ModeManagement(ad.ADBase):
                 # With morning sensors the first sensor unlocks the door (_waking_up), so a
                 # button in a bedroom or a phone can wake the house without opening the door.
                 # The sensors keep listening for that unlock
-                self.ADapi.log(f"{self.name}: {mode} after night. Morning items on, the door waits for a morning sensor") ###
                 self._turn_on_morning_items()
             else:
-                self.ADapi.log(f"{self.name}: {mode} after night. Morning actions incl. door unlock") ###
                 self._morning_actions()
 
         ## Transition to main "Night" mode ##
@@ -569,7 +573,6 @@ class ModeManagement(ad.ADBase):
                 # After execute_night_at a night mode still locks the door (never unlocks),
                 # until the morning sensors start listening. turn_off_at_night is not
                 # repeated: a night light mode going back to night must not turn it off again
-                self.ADapi.log(f"{self.name}: door: lock, {mode} after {self.execute_night}") ###
                 self._set_auto_relock(True)
 
         ## Main "Away" mode ##
@@ -578,7 +581,6 @@ class ModeManagement(ad.ADBase):
             self.start_alarm()
             self._morning_unlock_pending = False
 
-            self.ADapi.log(f"{self.name}: door: lock, mode is away") ###
             self._set_auto_relock(True)
 
         ## False alarm from your fire detection app ##
@@ -653,7 +655,6 @@ class ModeManagement(ad.ADBase):
                     namespace = self.HASS_namespace
                 )
         self._cancel_listening_for_night()
-        self.ADapi.log(f"{self.name}: door: lock, night actions") ###
         self._set_auto_relock(True)
 
     def _cancel_listening_for_morning(self) -> None:
@@ -721,13 +722,10 @@ class ModeManagement(ad.ADBase):
         """
         self._cancel_listening_for_morning()
         if self.current_mode == translations.away:
-            self.ADapi.log(f"{self.name}: morning sensor {entity} while away. Nothing done") ###
             return
         if self.current_mode not in (translations.morning, translations.automagical, self.family_mode):
             self._fire_mode(self.wake_mode())
-        if not self._morning_unlock_pending: self.ADapi.log(f"{self.name}: morning sensor {entity}: no unlock, the house has not been in night since the last unlock") ###
         if self._morning_unlock_pending:
-            self.ADapi.log(f"{self.name}: door: unlock, morning sensor {entity} (mode {self.current_mode})") ###
             self._morning_unlock_pending = False
             self._set_auto_relock(False)
 
@@ -743,7 +741,6 @@ class ModeManagement(ad.ADBase):
             self._fire_mode(self._normal_mode())
             # The echo from Home Assistant lands after execute_morning_at, so the window
             # check in _mode_event skips the actions at the exact boundary. Run them here
-            self.ADapi.log(f"{self.name}: {self.execute_morning} fallback: still night, morning actions incl. door unlock") ###
             self._morning_actions()
         elif self.current_mode == translations.morning:
             # Morning already ran the actions when it started
@@ -806,9 +803,11 @@ class ModeManagement(ad.ADBase):
         else:
             self._cancel_timer(self._lock_timer)
             self._lock_timer = None
+            # An intended unlock must never be followed by a re-lock from the check
+            self._cancel_timer(self._lock_verify_timer)
+            self._lock_verify_timer = None
             self._cancel_timer(self._unlock_timer) # Restart instead of stacking timers
 
-        self.ADapi.log(f"{self.name}: door: auto relock {'on' if enable else 'off'}") ###
         self._publish_to_doors("/set/auto_relock", "true" if enable else "false")
         if enable:
             self._lock_timer = self.ADapi.run_in(self._lock_door, LOCK_DELAY)
@@ -820,8 +819,52 @@ class ModeManagement(ad.ADBase):
     def _lock_door(self, **kwargs) -> None:
         """ Locks the MQTT doors. Timer callback from _set_auto_relock(True). """
         self._lock_timer = None
-        self.ADapi.log(f"{self.name}: door: LOCK sent") ###
         self._publish_to_doors("/set", "LOCK")
+        self._lock_retried = False
+        self._start_lock_verify()
+
+    def _start_lock_verify(self) -> None:
+        """ After LOCK: checks lock_verify_seconds later that the lock reported locked. """
+        if self.lock_verify_seconds <= 0:
+            return
+        self._cancel_timer(self._lock_verify_timer)
+        self._lock_sent_at = self.ADapi.get_now()
+        self._lock_verify_timer = self.ADapi.run_in(self._verify_lock, self.lock_verify_seconds)
+
+    def _verify_lock(self, **kwargs) -> None:
+        """ A door counts as not locked when it has reported unlocked and has not reported
+            locked since the LOCK was sent. A door that never reported (unknown state) is
+            skipped, because a lock that is already locked may not report anything.
+            A person who unlocks after the lock reported locked is left alone.
+            First failure: LOCK is sent once more to the doors that failed. Second failure:
+            WARNING and a notification, nothing more is sent.
+        """
+        self._lock_verify_timer = None
+        failed = []
+        for door in self.mqtt_door_lock:
+            state = self._door_state.get(str(door))
+            if state is None or state['locked']:
+                continue
+            locked_at = state.get('locked_at')
+            if locked_at is None or locked_at < self._lock_sent_at:
+                failed.append(str(door))
+        if not failed:
+            return
+        doors = ', '.join(failed)
+        if self._lock_retried:
+            self.ADapi.log(f"{self.name}: door {doors} did not report locked after LOCK was sent twice.", level = 'WARNING')
+            self._notify(
+                message = f"The door did not lock: {doors}",
+                message_title = "Door not locked",
+                also_if_not_home = True,
+                data = {'tag' : 'door_lock_failed'}
+            )
+            return
+        self.ADapi.log(f"{self.name}: door {doors} did not report locked {self.lock_verify_seconds} s after LOCK. Sending LOCK again.", level = 'WARNING')
+        self._lock_retried = True
+        for door in failed:
+            self.mqtt.mqtt_publish(topic = door + "/set", payload = "LOCK", namespace = self.MQTT_namespace)
+        self._start_lock_verify()
 
     def _unlock_door(self, **kwargs) -> None:
         """ Unlocks the MQTT doors. Timer callback from _set_auto_relock(False). """
@@ -832,10 +875,8 @@ class ModeManagement(ad.ADBase):
             self._door_state.get(str(door), {}).get('locked') is False
             for door in self.mqtt_door_lock
         ):
-            self.ADapi.log(f"{self.name}: door: already unlocked, UNLOCK skipped") ###
             return
         self._own_unlock_at = self.ADapi.get_now()
-        self.ADapi.log(f"{self.name}: door: UNLOCK sent") ###
         self._publish_to_doors("/set", "UNLOCK")
 
     def _mqtt_doorlock_event(self, event_name, data, **kwargs) -> None:
@@ -872,7 +913,9 @@ class ModeManagement(ad.ADBase):
             'locked': locked,
             'user': user,
             'source': source,
-            'unlocked_at': prev['unlocked_at'] if prev else None
+            'unlocked_at': prev['unlocked_at'] if prev else None,
+            # When the lock last reported locked. _verify_lock compares it with the LOCK it sent
+            'locked_at': self.ADapi.get_now() if locked else (prev['locked_at'] if prev else None)
         }
         if prev is None:
             return  # First message (possibly retained): nothing has changed yet
@@ -1035,7 +1078,6 @@ class ModeManagement(ad.ADBase):
                 person.role in ADULT_ROLES
                 and self.current_mode not in (translations.away, translations.night)
             ):
-                self.ADapi.log(f"{self.name}: door: unlock, {person.person_id} arrived (mode {self.current_mode})") ###
                 self._set_auto_relock(False)
 
         elif person.role == 'housekeeper':
@@ -1085,7 +1127,6 @@ class ModeManagement(ad.ADBase):
         if self._any_adult_home():
             return # Someone is still home
 
-        self.ADapi.log(f"{self.name}: door: lock, no adult home after {person.person_id} left") ###
         self._set_auto_relock(True)
 
         if self._outside_mode_blocks_away():

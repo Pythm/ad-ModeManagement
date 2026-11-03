@@ -81,7 +81,7 @@ Other apps:
   - [Lightwand](https://github.com/Pythm/ad-Lightwand) 2.3.0 or later is required (mode names). It is also required if you do not use Lightwand rooms, because this app reads the mode names from Lightwand's `translations_lightmodes.py`. Install it with HACS or by cloning it.
   - [Pythm_AppdaemonApps](https://github.com/Pythm/Pythm_AppdaemonApps) is optional. Clone it into your `apps` folder yourself. It has two uses here: its [`notify_mobiles`](https://github.com/Pythm/Pythm_AppdaemonApps#notify_mobiles) app can send the notifications (`notify_app`, see [Notifications](#-notifications)), and `utils_apps` is needed for `snapshot_directory`.
 
-This repository is **not** published to HACS, so it is installed by cloning. Neither `git clone` nor `requirements.txt` installs other repositories automatically, so each repository above has to be installed on its own.
+Neither `git clone` nor `requirements.txt` installs other repositories automatically, so each repository above has to be installed on its own.
 
 - If you run Appdaemon as a Addon in HA you'll have to specify the python packages manually in configuration in the Addon and restart Appdaemon.
 

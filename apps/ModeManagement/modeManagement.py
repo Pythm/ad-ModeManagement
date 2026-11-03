@@ -10,7 +10,7 @@
 
     @Pythm / https://github.com/Pythm
 """
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 import datetime
 import json
@@ -20,14 +20,18 @@ from appdaemon import adbase as ad
 
 from translations_lightmodes import translations
 
-from modeManagement_config import Person
-from vacuum_manager import UNAVAILABLE_STATES, VacuumControl, _as_list
+from modeManagement_config import AlarmMedia, Person
+from vacuum_manager import DEFAULT_MIN_BATTERY, UNAVAILABLE_STATES, VacuumControl, _as_list
 
 # States of a triggered alarm sensor: binary sensors, switches and covers/doors
 ALARM_STATES = ('on', 'open', 'opening')
 ALARM_NOTIFICATION_PAUSE = 600  # seconds between alarm notifications
 UNLOCK_ALARM_PAUSE = 20  # seconds without alarm notifications after a door unlock while nobody is home
+UNLOCK_USER_WAIT = 2  # seconds to wait for the lock to report who unlocked it
+UNLOCK_USER_WINDOW = 10  # seconds after an unlock in which a changed user is still that unlock
+OWN_UNLOCK_WINDOW = 15  # seconds after the app's own UNLOCK in which an unlock is the app's
 LOCK_DELAY = 10  # seconds from enabling auto relock until the door is locked
+DEFAULT_LOCK_VERIFY = 30  # seconds after LOCK until the app checks that the door reported locked
 UNLOCK_DELAY = 3  # seconds from disabling auto relock until the door is unlocked
 SNAPSHOT_WRITE_DELAY = 2  # seconds. Home Assistant writes the snapshot file after the service call
 MEDIA_START_DELAY = 8  # seconds. The amplifier needs time to switch source before playback
@@ -43,7 +47,10 @@ ADULT_ROLES = ('adult', 'family')
 
 
 def _parse_mode_and_room(mode: str) -> Tuple[str, Optional[str]]:
-    """ Splits 'off_livingroom' into ('off', 'livingroom'). """
+    """ Splits 'off_livingroom' into ('off', 'livingroom').
+        Copy of the function in Lightwand. Keep the two in sync, both apps must read
+        the same MODE_CHANGE event the same way.
+    """
     if '_' not in mode:
         return mode, None
     modename, roomname = mode.split('_', 1)
@@ -82,6 +89,9 @@ class ModeManagement(ad.ADBase):
 
         # Setting data
         self.current_mode:str = self._initial_mode()
+        # True from the night until the door has been unlocked in the morning. Set from
+        # the stored mode too, so a restart during the night still unlocks in the morning
+        self._morning_unlock_pending:bool = self.current_mode.startswith(translations.night)
         if self.current_mode == translations.away:
             self.start_alarm()
 
@@ -113,6 +123,7 @@ class ModeManagement(ad.ADBase):
         self.execute_night:str = self._time_arg('execute_night_at', '02:00:00')
         self.vacuum_earliest:str = self._time_arg('vacuum_earliest_start', self.morning_runtime)
         self.vacuum_latest:str = self._time_arg('vacuum_latest_start', '18:00:00')
+        self.ADapi.run_daily(self._vacuum_window_opened, self.vacuum_earliest)
 
     def _setup_vacation(self) -> None:
         """ Vacation switch from Home Assistant. Blocks the vacuums and means away at startup. """
@@ -212,20 +223,31 @@ class ModeManagement(ad.ADBase):
             if isinstance(item, dict):
                 sensor = item.get('sensor', None)
                 camera = item.get('camera', default_camera)
-                if not item.get('play_media', True):
-                    self.alarm_no_media.add(sensor)
+                play_media = item.get('play_media', True)
             else:
                 sensor = item
                 camera = default_camera
+                play_media = True
             if not sensor:
                 self.ADapi.log(f"{self.name}: alarmsensors entry {item} has no sensor", level = 'WARNING')
                 continue
             self.alarmsensors.append(sensor)
+            if not play_media:
+                self.alarm_no_media.add(sensor)
             if camera:
                 self.alarm_cameras[sensor] = camera
         self.sensor_handle:list = []
         self.alarm_active:bool = False
-        self.alarm_media:List[Dict[str, Any]] = _as_list(self.args.get('alarm_media', []))
+
+        # One dict or a list of dicts in YAML. A bad entry is logged and skipped, the rest still play
+        self.alarm_media:List[AlarmMedia] = []
+        for entry in _as_list(self.args.get('alarm_media', [])):
+            try:
+                media = entry if isinstance(entry, AlarmMedia) else AlarmMedia(**entry)
+            except Exception as exc:
+                self.ADapi.log(f"{self.name}: Could not use alarm_media entry {entry}. {exc}", level = 'ERROR')
+                continue
+            self.alarm_media.append(media)
 
         # Optional: save snapshots to a folder with utils_apps from Pythm_AppdaemonApps
         # Without it the camera picture is fetched by the mobile app from the camera entity.
@@ -252,7 +274,7 @@ class ModeManagement(ad.ADBase):
                 self.HASS_namespace,
                 self.args['vacuum'],
                 self.args.get('prevent_vacuum', []),
-                self.args.get('vacuum_min_battery', 40),
+                self.args.get('vacuum_min_battery', DEFAULT_MIN_BATTERY),
             )
         self.vacuum_event:Optional[str] = self.args.get('vacuum_event', None)
 
@@ -261,15 +283,26 @@ class ModeManagement(ad.ADBase):
         self.mqtt_door_lock:list = _as_list(self.args.get('MQTT_door_lock', []))
         self.unlock_door_when_home:bool = bool(self.args.get('unlock_door_when_home', False))
         self.mqtt:Optional[Any] = None
+        # Seconds to wait for the lock to report locked after LOCK. 0 turns the check off
+        self.lock_verify_seconds:int = int(self.args.get('lock_verify_seconds', DEFAULT_LOCK_VERIFY))
         self._lock_timer = None
         self._unlock_timer = None
+        self._lock_verify_timer = None
+        self._lock_sent_at:Optional[datetime.datetime] = None
+        self._lock_retried:bool = False
+        # Per door topic: locked, last_unlock_user, last_unlock_source, unlocked_at, locked_at
+        self._door_state:Dict[str, Dict[str, Any]] = {}
+        self._unlock_notify_timers:Dict[str, Any] = {}
+        self._own_unlock_at:Optional[datetime.datetime] = None
         if self.mqtt_door_lock:
             self.mqtt = self.get_plugin_api("MQTT")
             if self.mqtt is None:
                 self.ADapi.log(f"{self.name}: MQTT plugin not found. Door lock is disabled.", level = 'WARNING')
                 self.mqtt_door_lock = []
         for door in self.mqtt_door_lock:
-            self.mqtt.mqtt_subscribe(door)
+            # Same namespace as the listen and the publishes, so a broker that is not
+            # in the plugin's own namespace gets subscribe, listen and publish together
+            self.mqtt.mqtt_subscribe(door, namespace = self.MQTT_namespace)
             self.mqtt.listen_event(self._mqtt_doorlock_event, "MQTT_MESSAGE",
                 topic = door,
                 namespace = self.MQTT_namespace
@@ -305,6 +338,8 @@ class ModeManagement(ad.ADBase):
 
         self.ADapi.run_daily(self._waiting_for_night, self.night_runtime)
         # Same catch-up for the night window after a restart.
+        # Only plain night counts: a night variant (night_kids) still gets the listeners,
+        # and _good_night_now still fires plain night for the whole house. Intended.
         if (
             self.ADapi.now_is_between(self.night_runtime, self.execute_night)
             and self.current_mode != translations.night
@@ -315,6 +350,11 @@ class ModeManagement(ad.ADBase):
     def _time_arg(self, key:str, default:str) -> str:
         """ Returns the time from args if AppDaemon can parse it, else the default. """
         value = self.args.get(key, default)
+        # PyYAML reads an unquoted 22:00:00 as the YAML 1.1 sexagesimal int 79200.
+        # Turn seconds since midnight back into a time string. Out of range falls
+        # through to parse_time, which rejects it with the warning below
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 86400:
+            value = str(datetime.timedelta(seconds = value)).zfill(8)
         try:
             self.ADapi.parse_time(value)
         except Exception as exc:
@@ -361,6 +401,12 @@ class ModeManagement(ad.ADBase):
         """ True if an adult, kid or family member is home. Tenants and housekeepers do not count. """
         return self._count(*MAIN_HOUSE_ROLES) > 0
 
+    def _any_adult_home(self) -> bool:
+        """ True if an adult or family member is home. The one rule for "the house is
+            empty enough to lock the door and start the vacuums": kids do not count.
+        """
+        return self._count(*ADULT_ROLES) > 0
+
     def _family_mode_active(self) -> bool:
         """ True when a family mode is configured, a family member is home and no adult is home.
             Kids, tenants and housekeepers do not matter.
@@ -399,9 +445,47 @@ class ModeManagement(ad.ADBase):
             and self.ADapi.now_is_between(self.vacuum_earliest, self.vacuum_latest)
         )
 
+    def _outside_mode_blocks_away(self) -> bool:
+        """ True while the keep_mode_when_outside switch is on. Away mode and vacuums wait. """
+        return (
+            self.keep_mode_when_outside is not None
+            and self.ADapi.get_state(self.keep_mode_when_outside, namespace = self.HASS_namespace) == 'on'
+        )
+
+    def _kids_asleep_at_night(self) -> bool:
+        """ True when kids are home in night mode inside the night window.
+            Night mode is kept and the vacuums are not started.
+        """
+        return (
+            self.current_mode.startswith(translations.night)
+            and self.ADapi.now_is_between(self.night_runtime, self.morning_runtime)
+            and self._count('kid') > 0
+        )
+
+    def _vacuum_window_opened(self, **kwargs) -> None:
+        """ Daily timer at vacuum_earliest_start. If the last adult left before the window
+            opened, _set_away_mode found it closed and started nothing, so start here.
+            Same rules as when the last adult leaves. start_vacuum skips vacuums that are
+            not docked, so a vacuum already cleaning is left alone.
+        """
+        if not self._in_vacuum_window():
+            return
+        if self._any_adult_home():
+            return
+        if self._outside_mode_blocks_away() or self._kids_asleep_at_night():
+            return
+        self.ADapi.log(f"{self.name}: Vacuum window opened and no adult is home. Starting vacuums.", level = 'INFO')
+        self.start_vacuum()
+
+    def _timer_active(self, handle) -> bool:
+        """ True if handle is a run_in timer that has not fired yet. Safe to call with None. """
+        return handle is not None and self.ADapi.timer_running(handle)
+
     def _cancel_timer(self, handle) -> None:
-        """ Cancels a run_in timer if it is still waiting. Safe to call with None. """
-        if handle is not None and self.ADapi.timer_running(handle):
+        """ Cancels a run_in timer. Safe to call with None or a timer that already fired,
+            silent makes AppDaemon skip the warning for an unknown handle.
+        """
+        if handle is not None:
             self.ADapi.cancel_timer(handle, silent = True)
 
     def _notify(self, **kwargs) -> None:
@@ -440,6 +524,15 @@ class ModeManagement(ad.ADBase):
         self.current_mode = mode
         self._fire_mode(mode)
 
+    def _write_mode_text(self, value:str) -> None:
+        """ Shows value in the HALightModeText input_text, if configured. """
+        if self.ha_light_mode_text:
+            self.ADapi.call_service('input_text/set_value',
+                value = value,
+                entity_id = self.ha_light_mode_text,
+                namespace = self.HASS_namespace
+            )
+
     # ------------------------------------------------------------------
     # Mode events
     # ------------------------------------------------------------------
@@ -464,35 +557,29 @@ class ModeManagement(ad.ADBase):
             and self.ADapi.now_is_between(self.morning_runtime, self.execute_morning)
             and modename in (translations.automagical, translations.morning, self.family_mode)
         ):
-            for item in self.turn_on_in_the_morning:
-                if self.ADapi.get_state(item, namespace = self.HASS_namespace) == 'off':
-                    self.ADapi.call_service('homeassistant/turn_on',
-                        entity_id = item,
-                        namespace = self.HASS_namespace
-                    )
-            self._cancel_listening_for_morning()
-            self._set_auto_relock(False)
+            if self.morning_sensors:
+                # With morning sensors the first sensor unlocks the door (_waking_up), so a
+                # button in a bedroom or a phone can wake the house without opening the door.
+                # The sensors keep listening for that unlock
+                self._turn_on_morning_items()
+            else:
+                self._morning_actions()
 
         ## Transition to main "Night" mode ##
-        if (
-            roomname is None
-            and modename.startswith(translations.night)
-            and self.ADapi.now_is_between(self.night_runtime, self.execute_night)
-        ):
-            for item in self.turn_off_at_night:
-                if self.ADapi.get_state(item, namespace = self.HASS_namespace) == 'on':
-                    self.ADapi.call_service('homeassistant/turn_off',
-                        entity_id = item,
-                        namespace = self.HASS_namespace
-                    )
-
-            self._cancel_listening_for_night()
-
-            self._set_auto_relock(True)
+        if roomname is None and modename.startswith(translations.night):
+            if self.ADapi.now_is_between(self.night_runtime, self.execute_night):
+                self._night_actions()
+            elif self.ADapi.now_is_between(self.night_runtime, self.morning_runtime):
+                # After execute_night_at a night mode still locks the door (never unlocks),
+                # until the morning sensors start listening. turn_off_at_night is not
+                # repeated: a night light mode going back to night must not turn it off again
+                self._set_auto_relock(True)
 
         ## Main "Away" mode ##
+        # The full mode, not modename: a room mode like away_kitchen must not arm the house
         if mode == translations.away:
             self.start_alarm()
+            self._morning_unlock_pending = False
 
             self._set_auto_relock(True)
 
@@ -505,12 +592,7 @@ class ModeManagement(ad.ADBase):
         ## Fire detected from your fire detection app ##
         ## Updates input_text but not the current_mode so it can go back to previous if false alarm
         elif mode == translations.fire:
-            if self.ha_light_mode_text:
-                self.ADapi.call_service('input_text/set_value',
-                    value = translations.fire,
-                    entity_id = self.ha_light_mode_text,
-                    namespace = self.HASS_namespace
-                )
+            self._write_mode_text(translations.fire)
             return
 
         # Store mode to current_mode. Room modes like off_kitchen do not change the house mode
@@ -521,25 +603,59 @@ class ModeManagement(ad.ADBase):
                 self.current_mode = translations.automagical
             else:
                 self.current_mode = modename
+            if self.current_mode.startswith(translations.night):
+                self._morning_unlock_pending = True
 
             # Update input_text do display in GUI
-            if self.ha_light_mode_text:
-                self.ADapi.call_service('input_text/set_value',
-                    value = self.current_mode,
-                    entity_id = self.ha_light_mode_text,
-                    namespace = self.HASS_namespace
-                )
+            self._write_mode_text(self.current_mode)
 
     # ------------------------------------------------------------------
     # Morning and Night handling
     # ------------------------------------------------------------------
     def _cancel_handles(self, handles:list) -> None:
-        """ Cancels a list of listen_state handles. """
+        """ Cancels a list of listen_state handles.
+            silent makes AppDaemon return False instead of warning for an unknown handle
+        """
         for handle in handles:
-            try:
-                self.ADapi.cancel_listen_state(handle, silent = True)
-            except Exception as exc:
-                self.ADapi.log(f"Not possible to stop {handle}. Exception: {exc}", level = 'DEBUG')
+            self.ADapi.cancel_listen_state(handle, silent = True)
+
+    def _morning_actions(self) -> None:
+        """ What happens when the house goes from night to morning or normal: the
+            turn_on_in_the_morning items go on, the morning sensors stop listening and
+            the door unlocks (only with unlock_door_when_home).
+            Used by the execute_morning_at fallback, and by mode events when no
+            morning_sensors are configured.
+            Idempotent: items already on are skipped and _set_auto_relock restarts
+            the pending unlock instead of stacking a second one.
+        """
+        self._turn_on_morning_items()
+        self._cancel_listening_for_morning()
+        self._morning_unlock_pending = False
+        self._set_auto_relock(False)
+
+    def _turn_on_morning_items(self) -> None:
+        """ Turns on the turn_on_in_the_morning items that are exactly off. """
+        for item in self.turn_on_in_the_morning:
+            if self.ADapi.get_state(item, namespace = self.HASS_namespace) == 'off':
+                self.ADapi.call_service('homeassistant/turn_on',
+                    entity_id = item,
+                    namespace = self.HASS_namespace
+                )
+
+    def _night_actions(self) -> None:
+        """ What happens when the house goes to night: the turn_off_at_night items go
+            off, the night sensors stop listening and the door locks.
+            Idempotent: items already off are skipped and _set_auto_relock leaves a
+            pending lock alone.
+        """
+        for item in self.turn_off_at_night:
+            if self.ADapi.get_state(item, namespace = self.HASS_namespace) == 'on':
+                self.ADapi.call_service('homeassistant/turn_off',
+                    entity_id = item,
+                    namespace = self.HASS_namespace
+                )
+        self._cancel_listening_for_night()
+        self._set_auto_relock(True)
 
     def _cancel_listening_for_morning(self) -> None:
         """ Cancels the listen for morning handler. """
@@ -585,16 +701,33 @@ class ModeManagement(ad.ADBase):
         if self.current_mode == translations.morning:
             self._fire_mode(self._normal_mode())
 
-    def _waking_up(self, entity, attribute, old, new, **kwargs) -> None:
-        """ Reacts to morning sensors. Morning on workdays before morning_to_day, else normal. """
+    def wake_mode(self) -> str:
+        """ The mode for a house that wakes up now: morning on workdays until
+            morning_to_normal, else the normal mode (automagical or the family mode).
+            Public: wall switch apps call it through get_app, so a button in a bedroom
+            sets the same mode as the morning sensors. See LLM_CONTROLLERS.md.
+        """
         if (
-            self.ADapi.now_is_between(self.morning_runtime, self.morning_to_day)
+            self.ADapi.now_is_between(self.execute_night, self.morning_to_day)
             and not self._is_holiday()
         ):
-            self._fire_mode(translations.morning)
-        else:
-            self._fire_mode(self._normal_mode())
+            return translations.morning
+        return self._normal_mode()
+
+    def _waking_up(self, entity, attribute, old, new, **kwargs) -> None:
+        """ Reacts to the first morning sensor. Sets the wake mode while the house is
+            still in night (or another mode), but keeps morning or normal that a
+            button or phone has set already. Unlocks the door when the house was in
+            night since the last morning unlock (only with unlock_door_when_home).
+        """
         self._cancel_listening_for_morning()
+        if self.current_mode == translations.away:
+            return
+        if self.current_mode not in (translations.morning, translations.automagical, self.family_mode):
+            self._fire_mode(self.wake_mode())
+        if self._morning_unlock_pending:
+            self._morning_unlock_pending = False
+            self._set_auto_relock(False)
 
     def _going_to_bed(self, entity, attribute, old, new, **kwargs) -> None:
         """ Reacts to night sensors. Not in away mode. """
@@ -604,20 +737,31 @@ class ModeManagement(ad.ADBase):
 
     def _good_day_now(self, **kwargs) -> None:
         """ Change to normal day light at this time if mode is night or morning. """
-        if (
-            self.current_mode.startswith(translations.night)
-            or self.current_mode == translations.morning
-        ):
+        if self.current_mode.startswith(translations.night):
+            self._fire_mode(self._normal_mode())
+            # The echo from Home Assistant lands after execute_morning_at, so the window
+            # check in _mode_event skips the actions at the exact boundary. Run them here
+            self._morning_actions()
+        elif self.current_mode == translations.morning:
+            # Morning already ran the actions when it started
             self._fire_mode(self._normal_mode())
         self._cancel_listening_for_morning()
+        # The morning is over. A door still waiting for a sensor stays as it is
+        self._morning_unlock_pending = False
 
     def _good_night_now(self, **kwargs) -> None:
-        """ Change to night at the given time. """
+        """ Change to night at the given time.
+            A night variant (night_kids) is not plain night, so the whole house is
+            still sent to night here. Intended.
+        """
         if (
             self.current_mode != translations.away
             and self.current_mode != translations.night
         ):
             self._fire_mode(translations.night)
+            # Same boundary problem as _good_day_now: the echo lands after
+            # execute_night_at and _mode_event skips the actions. Run them here
+            self._night_actions()
         self._cancel_listening_for_night()
 
     def _is_holiday(self) -> bool:
@@ -654,32 +798,99 @@ class ModeManagement(ad.ADBase):
         if enable:
             self._cancel_timer(self._unlock_timer)
             self._unlock_timer = None
-            if self._lock_timer is not None and self.ADapi.timer_running(self._lock_timer):
+            if self._timer_active(self._lock_timer):
                 return # Already on its way
         else:
             self._cancel_timer(self._lock_timer)
             self._lock_timer = None
+            # An intended unlock must never be followed by a re-lock from the check
+            self._cancel_timer(self._lock_verify_timer)
+            self._lock_verify_timer = None
             self._cancel_timer(self._unlock_timer) # Restart instead of stacking timers
 
         self._publish_to_doors("/set/auto_relock", "true" if enable else "false")
         if enable:
             self._lock_timer = self.ADapi.run_in(self._lock_door, LOCK_DELAY)
         else:
+            # Any unlock by the app is also this morning's unlock
+            self._morning_unlock_pending = False
             self._unlock_timer = self.ADapi.run_in(self._unlock_door, UNLOCK_DELAY)
 
     def _lock_door(self, **kwargs) -> None:
         """ Locks the MQTT doors. Timer callback from _set_auto_relock(True). """
         self._lock_timer = None
         self._publish_to_doors("/set", "LOCK")
+        self._lock_retried = False
+        self._start_lock_verify()
+
+    def _start_lock_verify(self) -> None:
+        """ After LOCK: checks lock_verify_seconds later that the lock reported locked. """
+        if self.lock_verify_seconds <= 0:
+            return
+        self._cancel_timer(self._lock_verify_timer)
+        self._lock_sent_at = self.ADapi.get_now()
+        self._lock_verify_timer = self.ADapi.run_in(self._verify_lock, self.lock_verify_seconds)
+
+    def _verify_lock(self, **kwargs) -> None:
+        """ A door counts as not locked when it has reported unlocked and has not reported
+            locked since the LOCK was sent. A door that never reported (unknown state) is
+            skipped, because a lock that is already locked may not report anything.
+            A person who unlocks after the lock reported locked is left alone.
+            First failure: LOCK is sent once more to the doors that failed. Second failure:
+            WARNING and a notification, nothing more is sent.
+        """
+        self._lock_verify_timer = None
+        failed = []
+        for door in self.mqtt_door_lock:
+            state = self._door_state.get(str(door))
+            if state is None or state['locked']:
+                continue
+            locked_at = state.get('locked_at')
+            if locked_at is None or locked_at < self._lock_sent_at:
+                failed.append(str(door))
+        if not failed:
+            return
+        doors = ', '.join(failed)
+        if self._lock_retried:
+            self.ADapi.log(f"{self.name}: door {doors} did not report locked after LOCK was sent twice.", level = 'WARNING')
+            self._notify(
+                message = f"The door did not lock: {doors}",
+                message_title = "Door not locked",
+                also_if_not_home = True,
+                data = {'tag' : 'door_lock_failed'}
+            )
+            return
+        self.ADapi.log(f"{self.name}: door {doors} did not report locked {self.lock_verify_seconds} s after LOCK. Sending LOCK again.", level = 'WARNING')
+        self._lock_retried = True
+        for door in failed:
+            self.mqtt.mqtt_publish(topic = door + "/set", payload = "LOCK", namespace = self.MQTT_namespace)
+        self._start_lock_verify()
 
     def _unlock_door(self, **kwargs) -> None:
         """ Unlocks the MQTT doors. Timer callback from _set_auto_relock(False). """
         self._unlock_timer = None
+        # Already unlocked (auto relock is off, so it stays that way): nothing to send.
+        # An unknown state (no message yet since start) still sends
+        if all(
+            self._door_state.get(str(door), {}).get('locked') is False
+            for door in self.mqtt_door_lock
+        ):
+            return
+        self._own_unlock_at = self.ADapi.get_now()
         self._publish_to_doors("/set", "UNLOCK")
 
     def _mqtt_doorlock_event(self, event_name, data, **kwargs) -> None:
-        """ Listens to MQTT door events. An unlock by a known lock_user notifies, and a
-            housekeeper unlocking in away mode starts wash mode.
+        """ Listens to MQTT door messages. Zigbee2MQTT publishes the whole cached device
+            state on every attribute report, and the lock reports its state and its
+            last_unlock_* fields separately. So the app keeps the last known state per
+            door and reacts to changes only:
+            - LOCK -> UNLOCK: pauses the alarm if nobody is home and waits
+              UNLOCK_USER_WAIT seconds for the lock to report who unlocked.
+            - last_unlock_user or last_unlock_source changing while the door is unlocked
+              (within UNLOCK_USER_WINDOW seconds): notifies at once with that user.
+            - Otherwise, when the wait ends, notifies with the user the lock has reported
+              (unlocks with last_unlock_source 'self' are not notified).
+            The first message after a start only stores the state.
         """
         try:
             payload = json.loads(data['payload'])
@@ -688,43 +899,107 @@ class ModeManagement(ad.ADBase):
             return
         if not isinstance(payload, dict):
             return
-        if (
-            payload.get('state') == 'UNLOCK'
-            and payload.get('last_unlock_source') != 'self'
+        state = payload.get('state')
+        if state not in ('LOCK', 'UNLOCK'):
+            return
+        topic = str(data.get('topic', ''))
+        locked:bool = state == 'LOCK'
+        user = payload.get('last_unlock_user', None)
+        user = None if user is None else str(user)
+        source = payload.get('last_unlock_source', None)
+
+        prev = self._door_state.get(topic)
+        self._door_state[topic] = {
+            'locked': locked,
+            'user': user,
+            'source': source,
+            'unlocked_at': prev['unlocked_at'] if prev else None,
+            # When the lock last reported locked. _verify_lock compares it with the LOCK it sent
+            'locked_at': self.ADapi.get_now() if locked else (prev['locked_at'] if prev else None)
+        }
+        if prev is None:
+            return  # First message (possibly retained): nothing has changed yet
+
+        if locked:
+            self._cancel_timer(self._unlock_notify_timers.pop(topic, None))
+            return
+
+        now = self.ADapi.get_now()
+        if prev['locked']:
+            self._door_state[topic]['unlocked_at'] = now
+            self._door_unlocked(topic)
+        elif (
+            (user != prev['user'] or source != prev['source'])
+            and prev['unlocked_at'] is not None
+            and (now - prev['unlocked_at']).total_seconds() <= UNLOCK_USER_WINDOW
         ):
-            unlock_user = payload.get('last_unlock_user', None)
+            self._cancel_timer(self._unlock_notify_timers.pop(topic, None))
+            if not self._is_own_unlock():
+                self._notify_unlock(user)
 
-            for person in self.presence:
+    def _is_own_unlock(self) -> bool:
+        """ True within OWN_UNLOCK_WINDOW seconds after the app sent UNLOCK itself. The lock reports
+            the new state and then who unlocked it in separate messages, so every notify path checks this.
+        """
+        return (
+            self._own_unlock_at is not None
+            and (self.ADapi.get_now() - self._own_unlock_at).total_seconds() <= OWN_UNLOCK_WINDOW
+        )
+
+    def _door_unlocked(self, topic:str) -> None:
+        """ A door went from locked to unlocked. Ignores the unlock the app sent itself. """
+        if self._is_own_unlock():
+            return
+        # Someone opened the door while the alarm is armed: give them a moment
+        # before the sensors notify. A longer pause already running is kept.
+        if not self._anyone_at_main_house_home():
+            self._pause_alarm_notification(UNLOCK_ALARM_PAUSE)
+        self._cancel_timer(self._unlock_notify_timers.get(topic))
+        self._unlock_notify_timers[topic] = self.ADapi.run_in(
+            self._unlock_wait_over, UNLOCK_USER_WAIT, topic = topic
+        )
+
+    def _unlock_wait_over(self, **kwargs) -> None:
+        """ The lock did not report a new user in time: use what it has reported. """
+        topic = kwargs.get('topic', '')
+        self._unlock_notify_timers.pop(topic, None)
+        door = self._door_state.get(topic)
+        if door is None or door['locked'] or door['source'] == 'self' or self._is_own_unlock():
+            return
+        self._notify_unlock(door['user'])
+
+    def _notify_unlock(self, unlock_user:Optional[str]) -> None:
+        """ Notifies that the person with this lock_user unlocked the door, and a
+            housekeeper unlocking in away mode starts wash mode.
+        """
+        if unlock_user is None:
+            return
+        for person in self.presence:
+            if (
+                person.lock_user is not None
+                and str(unlock_user) == str(person.lock_user)
+            ):
                 if (
-                    person.lock_user is not None
-                    and unlock_user is not None
-                    and str(unlock_user) == str(person.lock_user)
+                    person.role == 'housekeeper'
+                    and self.current_mode == translations.away
                 ):
-                    if (
-                        person.role == 'housekeeper'
-                        and self.current_mode == translations.away
-                    ):
-                        self._set_mode(translations.wash)
-                    self._notify(
-                        message = f"{person.person_id} unlocked the door",
-                        message_title = "Door unlock",
-                        also_if_not_home = True,
-                        data = {'tag' : 'last_unlock_user'}
-                    )
-                    break
-
-            # Someone opened the door while the alarm is armed: give them a moment
-            # before the sensors notify. A longer pause already running is kept.
-            if not self._anyone_at_main_house_home():
-                self._pause_alarm_notification(UNLOCK_ALARM_PAUSE)
+                    self._set_mode(translations.wash)
+                self._notify(
+                    message = f"{person.person_id} unlocked the door",
+                    message_title = "Door unlock",
+                    also_if_not_home = True,
+                    data = {'tag' : 'last_unlock_user'}
+                )
+                break
 
     # ------------------------------------------------------------------
     # Vacation and presence
     # ------------------------------------------------------------------
     def _vacation_changed(self, entity, attribute, old, new, **kwargs) -> None:
         """ Vacation prevents vacuums from starting while away.
-            When the switch is turned off while nobody is home the house is cleaned once
+            When the switch is turned off while no adult is home the house is cleaned once
             before you get home, but only inside the normal vacuum start window.
+            Kids at home do not block, same rule as when the last adult leaves (_away).
         """
         if new == 'on':
             self.vacation = True
@@ -732,7 +1007,7 @@ class ModeManagement(ad.ADBase):
             self.vacation = False
             if old in UNAVAILABLE_STATES:
                 return # Home Assistant came back, not a real change
-            if self._anyone_at_main_house_home():
+            if self._any_adult_home():
                 return
             if not self._in_vacuum_window():
                 self.ADapi.log(
@@ -796,23 +1071,26 @@ class ModeManagement(ad.ADBase):
             self._cancel_timer(self.away_handler)
             self.away_handler = None
 
-            # Kids do not unlock the door, and at night or away the door stays locked
+            # Only the arriving adult or family member unlocks the door. A kid or a
+            # housekeeper coming home does not, even when an adult is already home.
+            # At night or away the door stays locked
             if (
-                self._count(*ADULT_ROLES) > 0
+                person.role in ADULT_ROLES
                 and self.current_mode not in (translations.away, translations.night)
             ):
                 self._set_auto_relock(False)
 
         elif person.role == 'housekeeper':
             # Nobody from the main house is home. The mode stays away (or wash after a
-            # door unlock, see _mqtt_doorlock_event), only the alarm is silenced
+            # door unlock, see _mqtt_doorlock_event), only the alarm is silenced.
+            # In wash mode the alarm is still armed from away, so stop it here too
             self._notify(
                 message = f"Housekeeper {person.person_id} entered",
                 message_title = "Housekeeping",
                 also_if_not_home = True,
                 data = {'tag' : 'last_unlock_user'}
             )
-            if self.current_mode == translations.away:
+            if self.current_mode in (translations.away, translations.wash):
                 self.stop_alarm()
 
     def _away(self, person:Person) -> None:
@@ -832,34 +1110,29 @@ class ModeManagement(ad.ADBase):
         ):
             self._set_mode(self._normal_mode())
 
+        # Morning ends when this person leaves and somebody from the main house stays.
+        # No return: when only kids stay the door lock, away timer and vacuums below
+        # must still run. _set_mode already set the right normal mode, so the
+        # _sync_family_mode call below finds nothing to change
         if (
             person.stopMorning
             and self.current_mode == translations.morning
             and self._anyone_at_main_house_home()
         ):
             self._set_mode(self._normal_mode())
-            return
 
         # An adult left with family home, or the last family member left in family mode
         self._sync_family_mode()
 
-        if self._count(*ADULT_ROLES) > 0:
+        if self._any_adult_home():
             return # Someone is still home
 
         self._set_auto_relock(True)
 
-        if (
-            self.keep_mode_when_outside is not None
-            and self.ADapi.get_state(self.keep_mode_when_outside, namespace = self.HASS_namespace) == 'on'
-        ):
+        if self._outside_mode_blocks_away():
             return
 
-        # Kids asleep at night: keep night mode and do not start vacuums
-        if (
-            self.current_mode.startswith(translations.night)
-            and self.ADapi.now_is_between(self.night_runtime, self.morning_runtime)
-            and self._count('kid') > 0
-        ):
+        if self._kids_asleep_at_night():
             return
 
         # Kids may still be home: the door locks and the vacuums may start, but away
@@ -885,10 +1158,16 @@ class ModeManagement(ad.ADBase):
     # Notification when nobody is home
     # ------------------------------------------------------------------
     def start_alarm(self) -> None:
-        """ Starts listening for sensor activity. """
+        """ Starts listening for sensor activity.
+            AppDaemon filters with the old/new callables, so the callback only runs for a
+            real trigger. A sensor recovering from unavailable/unknown (old is None or one
+            of UNAVAILABLE_STATES) is not a trigger (README, 0.3.1).
+        """
         if not self.alarm_active:
             for sensor in self.alarmsensors:
                 handle = self.ADapi.listen_state(self._sensor_activated, sensor,
+                    old = lambda old: old not in UNAVAILABLE_STATES,
+                    new = lambda new: new in ALARM_STATES,
                     namespace = self.HASS_namespace
                 )
                 self.sensor_handle.append(handle)
@@ -897,10 +1176,20 @@ class ModeManagement(ad.ADBase):
             self.media_on_alarm = True
 
     def stop_alarm(self) -> None:
-        """ Stops listening for sensor activity. """
+        """ Stops listening for sensor activity and clears the notification and media
+            pauses, so the next start_alarm begins clean.
+        """
         self._cancel_handles(self.sensor_handle)
         self.sensor_handle = []
         self.alarm_active = False
+        self._cancel_timer(self._alarm_reset_timer)
+        self._cancel_timer(self._media_reset_timer)
+        self._alarm_reset_timer = None
+        self._media_reset_timer = None
+        self._alarm_pause_end = None
+        self._media_pause_end = None
+        self.notify_on_alarm = True
+        self.media_on_alarm = True
 
     def _start_pause(self, handle, pause_end:Optional[datetime.datetime], callback, seconds:int):
         """ Re-arms a pause timer, unless the running one ends later than the new one.
@@ -908,9 +1197,8 @@ class ModeManagement(ad.ADBase):
         """
         new_end = self.ADapi.get_now() + datetime.timedelta(seconds = seconds)
         if (
-            handle is not None
-            and pause_end is not None
-            and self.ADapi.timer_running(handle)
+            pause_end is not None
+            and self._timer_active(handle)
             and pause_end > new_end
         ):
             return handle, pause_end # The running pause is longer, keep it
@@ -933,11 +1221,9 @@ class ModeManagement(ad.ADBase):
             )
 
     def _sensor_activated(self, entity, attribute, old, new, **kwargs) -> None:
-        """ Sends notification with picture if triggered, and plays music. """
-        # A sensor recovering from unavailable/unknown is not a trigger (README, 0.3.1)
-        if new not in ALARM_STATES or old in UNAVAILABLE_STATES:
-            return
-
+        """ Sends notification with picture if triggered, and plays music.
+            Only called for a real trigger, see the old/new filters in start_alarm.
+        """
         # Unlike _anyone_at_main_house_home, a housekeeper at home also silences the
         # alarm: they work inside the main house. Tenants live separately and do not
         for person in self.presence:
@@ -990,19 +1276,19 @@ class ModeManagement(ad.ADBase):
     def _alarm_media(self) -> None:
         """ Selects source, sets volume and starts the alarm playlists. """
         for play_media in self.alarm_media:
-            if 'amp' in play_media:
-                if 'source' in play_media:
-                    self.ADapi.call_service('media_player/select_source',
-                        entity_id = play_media['amp'],
-                        source = play_media['source'],
-                        namespace = self.HASS_namespace
-                    )
-                if 'volume' in play_media:
-                    self.ADapi.call_service('media_player/volume_set',
-                        entity_id = play_media['amp'],
-                        volume_level = play_media['volume'],
-                        namespace = self.HASS_namespace
-                    )
+            # AlarmMedia guarantees amp is set when source, volume or normal_volume is
+            if play_media.source is not None:
+                self.ADapi.call_service('media_player/select_source',
+                    entity_id = play_media.amp,
+                    source = play_media.source,
+                    namespace = self.HASS_namespace
+                )
+            if play_media.volume is not None:
+                self.ADapi.call_service('media_player/volume_set',
+                    entity_id = play_media.amp,
+                    volume_level = play_media.volume,
+                    namespace = self.HASS_namespace
+                )
             self.ADapi.run_in(self._play_alarm_on_speakers, MEDIA_START_DELAY,
                 play_media = play_media
             )
@@ -1018,24 +1304,24 @@ class ModeManagement(ad.ADBase):
 
     def _play_alarm_on_speakers(self, **kwargs) -> None:
         """ Plays media after sensor is triggered. """
-        play_media = kwargs['play_media']
+        play_media:AlarmMedia = kwargs['play_media']
         self.ADapi.call_service('media_player/play_media',
-            entity_id = play_media['player'],
-            media_content_id = play_media['playlist'],
+            entity_id = play_media.player,
+            media_content_id = play_media.playlist,
             media_content_type = 'music',
             namespace = self.HASS_namespace
         )
-        if 'normal_volume' in play_media:
+        if play_media.normal_volume is not None:
             self.ADapi.run_in(self._reset_soundlevel, VOLUME_RESET_DELAY,
                 play_media = play_media
             )
 
     def _reset_soundlevel(self, **kwargs) -> None:
         """ Sets sound level back to normal volume after alarm. """
-        play_media = kwargs['play_media']
+        play_media:AlarmMedia = kwargs['play_media']
         self.ADapi.call_service('media_player/volume_set',
-            entity_id = play_media['amp'],
-            volume_level = play_media['normal_volume'],
+            entity_id = play_media.amp,
+            volume_level = play_media.normal_volume,
             namespace = self.HASS_namespace
         )
 
